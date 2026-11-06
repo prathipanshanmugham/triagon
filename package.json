@@ -1,0 +1,14 @@
+{
+  "name": "triagon-erp-web",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Triagon Ventures ERP — web edition",
+  "main": "server/server.js",
+  "scripts": {
+    "build": "node client/build.js",
+    "start": "node server/server.js",
+    "reset-password": "node server/cli.js reset-password"
+  },
+  "engines": { "node": ">=22.13" },
+  "dependencies": { "playwright-core": "1.56.1" }
+}

@@ -1,0 +1,33 @@
+# Triagon ERP on a VPS: the app plus Caddy for HTTPS (free Let's Encrypt certificate)
+services:
+  erp:
+    build: .
+    image: triagon-erp:2
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: https://${DOMAIN}
+      COOKIE_SECURE: "1"
+      TZ: Asia/Kolkata
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8080:8080"   # only reachable from the server itself; the public goes through Caddy
+    shm_size: 256m
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [erp]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:
