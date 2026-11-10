@@ -336,7 +336,7 @@ function stockMap() { return memo('stock', () => { const m = {}; for (const p of
 function badMap() { return memo('bad', () => { const m = {}; for (const mv of S.moves) if (N(mv.badQty)) m[mv.productId] = (m[mv.productId] || 0) + N(mv.badQty); for (const s of S.sales) if (s.status === 'returned' && s.retCondition === 'bad') m[s.productId] = (m[s.productId] || 0) + N(s.retQty || s.qty); for (const k in m) m[k] = rq3(m[k]); return m; }); }
 function sold30() { return memo('sold30', () => { const r = [addDays(TODAY(), -29), TODAY()]; const m = {}; for (const s of S.sales) if (inRange(s.date, r) && s.status !== 'cancelled' && s.status !== 'returned') m[s.productId] = (m[s.productId] || 0) + N(s.qty); return m; }); }
 const lineFactor = l => N(l.factor) || 1;
-function onOrder() { return memo('onorder', () => { const m = {}; for (const po of S.pos) if (po.status === 'ordered' || po.status === 'partial') for (const l of (po.lines || [])) m[l.productId] = rq3((m[l.productId] || 0) + Math.max(0, N(l.qty) - N(l.received) - N(l.rejected)) * lineFactor(l)); return m; }); }
+function onOrder() { return memo('onorder', () => { const m = {}; for (const po of S.pos) if (po.status === 'ordered' || po.status === 'partial') for (const l of (po.lines || [])) if (l.productId) m[l.productId] = rq3((m[l.productId] || 0) + Math.max(0, N(l.qty) - N(l.received) - N(l.rejected)) * lineFactor(l)); return m; }); }
 function stockState(p) {
   const on = stockMap()[p.id] || 0, rl = N(p.reorderLevel ?? 10), v = sold30()[p.id] || 0; const cover = on <= 0 ? 0 : v ? on / (v / 30) : Infinity;
   const st = on <= 0 ? 'out' : on <= rl ? 'low' : cover > 120 && on > rl * 3 ? 'over' : 'ok';
