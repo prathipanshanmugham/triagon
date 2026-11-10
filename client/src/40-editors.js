@@ -132,7 +132,7 @@ EDIT.sale = (id, preset = {}) => {
     { n: 'productId', l: 'Product', t: 'select', req: 1, full: 1, o: () => { const o = prodOpts(); if (s && !o.some(x => x[0] === s.productId) && prodOf(s.productId)) o.push([s.productId, prodOf(s.productId).name]); return o; }, blank: 'Choose a product…' },
     { n: 'qty', l: 'Quantity', t: 'number', req: 1, min: 0, step: 'any', help: 'In the product’s unit (pieces, sq ft, metres…). Decimals are fine.' }, { n: 'unitPrice', l: 'Price per unit (incl. GST)', t: 'money', min: 0, help: 'Blank uses the product’s price on this platform.' },
     { n: 'status', l: 'Status', t: 'select', o: SALE_STATUS }, { n: 'orderRef', l: 'Order or settlement ref', mono: 1, ph: 'e.g. 402-1234567-1234567' },
-    { n: 'retCondition', l: 'If returned, it came back', t: 'select', o: () => RET_COND }, { n: 'retDate', l: 'Return received on', t: 'date' },
+    { n: 'retCondition', l: 'It came back', t: 'select', o: () => RET_COND, when: 'status:returned' }, { n: 'retDate', l: 'Return received on', t: 'date', when: 'status:returned' },
     { n: 'customerId', l: 'Customer', t: 'select', o: () => S.customers.slice().sort((a, b) => (a.name > b.name ? 1 : -1)).map(c => [c.id, c.name + (c.city ? ' · ' + c.city : '')]), blank: 'No customer record' },
     { n: 'actualFees', l: 'Actual fees charged (ex-GST)', t: 'money', min: 0, help: 'Total for this entry from the settlement report. Blank uses Fee settings.' },
     { n: 'note', l: 'Note', t: 'textarea', rows: 2, full: 1 },

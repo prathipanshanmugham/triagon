@@ -1,6 +1,6 @@
 /* ---------- boot ---------- */
 const subFns = {}; let sessionLogged = false;
-const SETTING_KEYS = ['platforms', 'roles', 'company', 'audit', 'attendance', 'reports', 'security', 'hr', 'recon', 'purchase', 'listings', 'claims'];
+const SETTING_KEYS = ['ceo', 'platforms', 'roles', 'company', 'audit', 'attendance', 'reports', 'security', 'hr', 'recon', 'purchase', 'listings', 'claims'];
 function afterSnapshot() {
   if (!COLS.every(k => S.definitive[k])) return;
   if (MODE === 'live' && ME.id && !SVC) autoPostRecurring();

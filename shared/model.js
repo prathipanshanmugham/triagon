@@ -3,6 +3,7 @@
 const MODEL = (() => {
   const MODULES = [
     { k: 'dashboard', l: 'Dashboard', g: 'Overview', i: 'dash' },
+    { k: 'ceo', l: 'CEO report', g: 'Overview', i: 'gauge' },
     { k: 'daily', l: 'Daily report', g: 'Overview', i: 'pdf' },
     { k: 'reports', l: 'Reports', g: 'Overview', i: 'report' },
     { k: 'brands', l: 'Brands', g: 'Catalogue & stock', i: 'tag' },
@@ -29,8 +30,8 @@ const MODEL = (() => {
   ];
   const ALL_EDIT = Object.fromEntries(MODULES.map(m => [m.k, 'edit']));
   const DEFAULT_ROLE_DEFS = {
-    manager: { label: 'Manager', modules: { ...ALL_EDIT, hr: 'none', users: 'view', logs: 'view' }, sections: Object.fromEntries(FIN_SECTIONS.map(s => [s[0], true])), abilities: { overview: true, costs: true, export: true, approveDelete: true } },
-    staff: { label: 'Staff', modules: { dashboard: 'view', daily: 'edit', reports: 'none', brands: 'view', catalogue: 'edit', inventory: 'edit', orders: 'edit', returns: 'edit', finance: 'none', calculator: 'view', marketing: 'view', customers: 'edit', attendance: 'view', hr: 'none', approvals: 'view', users: 'none', logs: 'none' }, sections: { pnl: false, sales: true, expenses: false, recurring: false, payouts: false, accounts: false, assets: false }, abilities: { overview: false, costs: false, export: false, approveDelete: false } },
+    manager: { label: 'Manager', modules: { ...ALL_EDIT, ceo: 'none', hr: 'none', users: 'view', logs: 'view' }, sections: Object.fromEntries(FIN_SECTIONS.map(s => [s[0], true])), abilities: { overview: true, costs: true, export: true, approveDelete: true } },
+    staff: { label: 'Staff', modules: { dashboard: 'view', ceo: 'none', daily: 'edit', reports: 'none', brands: 'view', catalogue: 'edit', inventory: 'edit', orders: 'edit', returns: 'edit', finance: 'none', calculator: 'view', marketing: 'view', customers: 'edit', attendance: 'view', hr: 'none', approvals: 'view', users: 'none', logs: 'none' }, sections: { pnl: false, sales: true, expenses: false, recurring: false, payouts: false, accounts: false, assets: false }, abilities: { overview: false, costs: false, export: false, approveDelete: false } },
   };
   // Which modules may write a collection (any one is enough) and which may read it.
   const W = {
@@ -47,7 +48,7 @@ const MODEL = (() => {
     expenses: ['finance', 'hr'], recurring: ['finance'], payouts: ['finance'], assets: ['finance'], accounts: ['finance', 'orders', 'inventory', 'hr'], txns: ['finance', 'orders', 'inventory', 'hr'], pinvoices: ['inventory', 'finance'],
     candidates: ['hr'], hrprofiles: ['hr'], payroll: ['hr'], hradj: ['hr'], claims: ['returns', 'finance'], orders: ['orders', 'finance', 'returns', 'dashboard'],
   };
-  const SETTINGS_W = { platforms: ['finance', 'calculator'], attendance: ['attendance'], reports: ['daily'], hr: ['hr'], recon: ['finance'], purchase: ['inventory', 'finance'], listings: ['catalogue'], claims: ['returns'] };
+  const SETTINGS_W = { ceo: ['ceo'], platforms: ['finance', 'calculator'], attendance: ['attendance'], reports: ['daily'], hr: ['hr'], recon: ['finance'], purchase: ['inventory', 'finance'], listings: ['catalogue'], claims: ['returns'] };
   const COLLECTIONS = Object.keys(W);
   const mergeRole = (d, x) => ({ label: x.label || d.label, custom: !!x.custom, modules: { ...d.modules, ...(x.modules || {}) }, sections: { ...d.sections, ...(x.sections || {}) }, abilities: { ...d.abilities, ...(x.abilities || {}) } });
   function roleDefs(rolesSetting) {

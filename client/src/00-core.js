@@ -669,7 +669,7 @@ function fld(f, v) {
   else input = `<input class="inp${f.mono ? ' mono' : ''}" type="${t === 'date' ? 'date' : t === 'time' ? 'time' : t === 'password' || t === 'pw' ? 'password' : t === 'email' ? 'email' : t === 'tel' ? 'tel' : 'text'}"${t === 'password' ? ' inputmode="numeric" maxlength="8"' : t === 'pw' ? ' autocomplete="new-password"' : ''} id="${id}" name="${f.n}" data-t="str" value="${esc(val)}" placeholder="${esc(f.ph || '')}"${f.max ? ` maxlength="${f.max}"` : ''}${req}${dis} autocomplete="off">`;
   const star = f.req ? ' <span class="req">*</span>' : '';
   const lab = ['check', 'multi', 'swatch'].includes(t) ? `<span class="lab">${esc(f.l)}${star}</span>` : `<label for="${id}">${esc(f.l)}${star}</label>`;
-  return `<div class="fld${f.full ? ' full' : ''}" data-fld="${esc(f.n)}">${f.l ? lab : ''}${input}${f.help ? `<div class="help">${f.help}</div>` : ''}<div class="err" hidden></div></div>`;
+  return `<div class="fld${f.full ? ' full' : ''}" data-fld="${esc(f.n)}"${f.when ? ` data-when="${esc(f.when)}"` : ''}>${f.l ? lab : ''}${input}${f.help ? `<div class="help">${f.help}</div>` : ''}<div class="err" hidden></div></div>`;
 }
 const form = (fields, vals = {}) => `<div class="form">${fields.filter(f => !f.hide).map(f => f.raw ? `<div class="fld full">${f.raw}</div>` : fld(f, getPath(vals, f.n))).join('')}</div>`;
 function readForm(root) {
