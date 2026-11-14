@@ -1,7 +1,7 @@
 /* =====================================================================
    Views: finance & assets, reports, marketing, customers & reviews
    ===================================================================== */
-const SALE_TONE = { delivered: 't-good', transit: 't-info', returned: 't-warn', cancelled: 't-neu' };
+const SALE_TONE = { pending: 't-acc', delivered: 't-good', transit: 't-info', returned: 't-warn', cancelled: 't-neu' };
 const saleLabel = s => (SALE_STATUS.find(x => x[0] === s) || [s, s])[1];
 
 /* ---------------- finance ---------------- */
@@ -163,7 +163,6 @@ function finAssets() {
 
 /* ---------------- reports ---------------- */
 const RT = { inr: v => inr(v), num: v => num(v), pct: v => pct(v), x: v => v ? N(v).toFixed(2) + '×' : '—', rating: v => v ? N(v).toFixed(2) + '★' : '—', date: v => fmtD(v), text: v => esc(v ?? '') };
-function stockAt(pid, before) { const p = prodOf(pid); let q = N(p && p.openingStock); for (const m of S.moves) if (m.productId === pid && m.date < before) q += N(m.qty); for (const s of S.sales) if (s.productId === pid && s.date < before) q -= saleStockOut(s); return q; }
 const REPORTS = [
   { k: 'sales_platform', l: 'Sales by platform', d: 'Units, revenue, fees and contribution for each marketplace in the period.', run(r) { return finGroupReport(r, s => s.platform, k => PL(k).name, 'Platform', k => PL(k).color); } },
   { k: 'sales_brand', l: 'Sales by brand', d: 'How each brand sold across all platforms in the period.', run(r) { return finGroupReport(r, s => s.brandId || (prodOf(s.productId) || {}).brandId || '', k => brandName(k), 'Brand', k => (brandOf(k) || {}).color || 'c8'); } },
@@ -196,10 +195,22 @@ const REPORTS = [
     }
   },
   {
-    k: 'stock_moves', l: 'Stock movement', d: 'Opening, inward, outward and closing units per product for the period.', run(r) {
-      const end = addDays(r[1] > TODAY() ? TODAY() : r[1], 1);
-      const rows = S.products.filter(inBrand).map(p => { const open = stockAt(p.id, r[0]); let inn = 0, out = 0; S.moves.forEach(m => { if (m.productId === p.id && inRange(m.date, r)) { if (N(m.qty) >= 0) inn += N(m.qty); else out -= N(m.qty); } }); S.sales.forEach(s => { if (s.productId === p.id && inRange(s.date, r)) out += saleStockOut(s); }); return { sku: p.sku, name: p.name, open, inn, out, close: stockAt(p.id, end) }; }).filter(x => x.open || x.inn || x.out || x.close);
-      return { cols: [['sku', 'SKU', 'text'], ['name', 'Product', 'text'], ['open', 'Opening', 'num'], ['inn', 'In', 'num'], ['out', 'Out', 'num'], ['close', 'Closing', 'num']], rows, foot: { sku: 'Total', open: sum(rows, x => x.open), inn: sum(rows, x => x.inn), out: sum(rows, x => x.out), close: sum(rows, x => x.close) } };
+    k: 'stock_moves', l: 'Stock movement', d: 'Opening, inward, outward and closing stock per item for the period, in its own unit. Products that take stock from a master show under the master.', run(r) {
+      const end = addDays(r[1] > TODAY() ? TODAY() : r[1], 1); const E = stockEngine(); const o = stockEngine(addDays(r[0], -1)).on, c = stockEngine(addDays(end, -1)).on;
+      const rows = S.products.filter(p => inBrand(p) && !isLinked(p)).map(p => { let inn = 0, out = 0; for (const e of E.ev[p.id] || []) { if (e.k === 'count' || e.k === 'opening' || e.k === 'bad' || !inRange(e.d, r)) continue; if (e.q >= 0) inn += e.q; else out -= e.q; } const open = rq3(o[p.id] || 0), close = rq3(c[p.id] || 0); return { sku: p.sku, name: p.name, unit: unitOf(p), open, inn: rq3(inn), out: rq3(out), adj: rq3(close - open - inn + out), close }; }).filter(x => x.open || x.inn || x.out || x.close);
+      return { cols: [['sku', 'SKU', 'text'], ['name', 'Item', 'text'], ['unit', 'Unit', 'text'], ['open', 'Opening', 'num'], ['inn', 'In', 'num'], ['out', 'Out', 'num'], ['adj', 'Count adj.', 'num'], ['close', 'Closing', 'num']], rows, foot: { sku: 'Total' } };
+    }
+  },
+  {
+    k: 'material_use', l: 'Master material consumption', d: 'How much of each master material was used by sales and orders in the period, which products used it, and what is left.', run(r) {
+      const E = stockEngine(); const end = addDays(r[1] > TODAY() ? TODAY() : r[1], 1); const c = stockEngine(addDays(end, -1)).on; const o = stockEngine(addDays(r[0], -1)).on; const costs = allow('costs');
+      const rows = S.products.filter(p => isMaterial(p) && (inBrand(p) || usersOf(p.id).some(inBrand))).map(p => {
+        let used = 0, back = 0, recd = 0; const by = {};
+        for (const e of E.ev[p.id] || []) { if (!inRange(e.d, r)) continue; if (e.k === 'sale' || e.k === 'order') { used -= e.q; by[e.pid] = (by[e.pid] || 0) - e.q; } else if (e.k === 'return') { back += e.q; by[e.pid] = (by[e.pid] || 0) - e.q; } else if (e.k === 'move' && e.q > 0) recd += e.q; }
+        const top = Object.entries(by).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, q]) => `${(prodOf(id) || {}).sku || id} ${qty(q)}`).join(', ');
+        return { sku: p.sku, name: p.name, unit: unitOf(p), open: rq3(o[p.id] || 0), recd: rq3(recd), used: rq3(used), back: rq3(back), net: rq3(used - back), close: rq3(c[p.id] || 0), value: costs ? Math.round((used - back) * N(p.costPrice)) : null, top };
+      }).filter(x => x.open || x.used || x.recd || x.close);
+      return { cols: [['sku', 'SKU', 'text'], ['name', 'Master material', 'text'], ['unit', 'Unit', 'text'], ['open', 'Opening', 'num'], ['recd', 'Received', 'num'], ['used', 'Used', 'num'], ['back', 'Returned', 'num'], ['net', 'Net used', 'num'], ...(costs ? [['value', 'Used at cost', 'inr']] : []), ['close', 'Closing', 'num'], ['top', 'Main products', 'text']], rows, foot: { sku: 'Total', ...(costs ? { value: sum(rows, x => x.value) } : {}) } };
     }
   },
   {

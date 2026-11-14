@@ -37,8 +37,11 @@ let labRAF = 0;
 function applyWhen(root) {
   const form = root.querySelector('#drForm'); if (!form) return;
   for (const f of form.querySelectorAll('.fld[data-when]')) {
-    const [n, rule] = f.dataset.when.split(':'); const ctl = form.querySelector(`[name="${n}"]`); if (!ctl) continue;
-    const neg = rule.startsWith('!'); const hit = rule.replace(/^!/, '').split('|').includes(ctl.value); const show = neg ? !hit : hit;
+    let show = true;
+    for (const cond of f.dataset.when.split(';')) {
+      const [n, rule] = cond.split(':'); const ctl = form.querySelector(`[name="${n}"]`); if (!ctl) continue;
+      const neg = rule.startsWith('!'); const hit = rule.replace(/^!/, '').split('|').includes(ctl.value); if (neg ? hit : !hit) { show = false; break; }
+    }
     if (f.hidden === show) f.hidden = !show;
   }
 }

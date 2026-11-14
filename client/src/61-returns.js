@@ -57,7 +57,7 @@ function retList() {
 // record (or correct) a return against a sales entry; a part return splits the entry
 EDIT.ret = (id, preset = {}) => {
   const s0 = id ? S.sales.find(x => x.id === id) : null; const can = canEdit('returns');
-  const cands = () => S.sales.filter(s => s.status !== 'cancelled' && (s.status !== 'returned' || s.id === id) && inBrand(s)).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 400).map(s => [s.id, `${fmtDs(s.date)} · ${PL(s.platform).code || PL(s.platform).name} · ${s.orderRef || 'no order id'} · ${(prodOf(s.productId) || {}).sku || ''} × ${qty(s.qty)}`]);
+  const cands = () => S.sales.filter(s => s.status !== 'cancelled' && s.status !== 'pending' && (s.status !== 'returned' || s.id === id) && inBrand(s)).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 400).map(s => [s.id, `${fmtDs(s.date)} · ${PL(s.platform).code || PL(s.platform).name} · ${s.orderRef || 'no order id'} · ${(prodOf(s.productId) || {}).sku || ''} × ${qty(s.qty)}`]);
   const v0 = s0 ? { saleId: s0.id, retQty: s0.qty, retCondition: rcOf(s0), retDate: s0.retDate || TODAY(), retNote: s0.retNote || '', raise: false } : { retDate: TODAY(), retCondition: 'good', raise: true, ...preset };
   const f = [
     { n: 'saleId', l: 'Sale it came back from', t: 'select', req: 1, full: 1, o: cands, blank: 'Pick the order…', ro: !!s0, help: s0 ? '' : 'Search by date, platform, order id or SKU. Import or record the sale first if it isn’t here.' },

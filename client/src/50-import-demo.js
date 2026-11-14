@@ -2,8 +2,8 @@
    Imports, demo data, event wiring, boot
    ===================================================================== */
 const IMPORT = {
-  products: { title: 'Import products', cols: 'sku,name,brand_code,category,variant,mrp,selling_price,cost_price,packaging_cost,gst_rate,hsn,weight_g,opening_stock,reorder_level,location,status', help: 'Brand is matched by brand code or name. Rows with an existing SKU update that product; blank cells keep the current value.' },
-  sales: { title: 'Import sales', cols: 'date,platform,sku,qty,unit_price,status,order_ref,actual_fees', help: 'Dates as YYYY-MM-DD or DD-MM-YYYY. Platform by name (Amazon, Flipkart…). Status: delivered, in transit, returned or cancelled; blank means delivered. Blank unit price uses the product’s price.' },
+  products: { title: 'Import products', cols: 'sku,name,brand_code,category,variant,unit,mrp,selling_price,cost_price,packaging_cost,gst_rate,hsn,weight_g,opening_stock,reorder_level,location,status,type,material_type,colour,grade,spec,master_sku,uses', help: 'Brand is matched by brand code or name. Rows with an existing SKU update that product; blank cells keep the current value. Master stock: type “material” makes a master (with material_type, colour, grade, spec). master_sku links a product to its master; uses says how much one unit takes (50 ml, 100 g, 12x18 in). Without uses, the amount is read from the name or variant.' },
+  sales: { title: 'Import orders & sales', cols: 'date,platform,sku,qty,unit_price,status,order_ref,actual_fees,size,ship_date,return_condition', help: 'Amazon and Flipkart order reports work as they are (order id, purchase date, order status, SKU / ASIN, quantity, item price). SKU can be the master SKU, a channel SKU or the ASIN. Re-importing is safe: an order already imported is updated (shipped, delivered, cancelled, returned), never added twice. Status: placed / pending, shipped, delivered, returned or cancelled. size: piece size for cut-to-size products, e.g. 12x18 in.' },
 };
 let IMP = null;
 function parseCSV(text) {
@@ -12,20 +12,22 @@ function parseCSV(text) {
   if (cell || row.length) { row.push(cell); rows.push(row); }
   return rows.filter(r => r.some(c => String(c).trim()));
 }
-function normDate(s) { s = String(s || '').trim(); let m; if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`; if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/))) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`; return null; }
+// a stable id for an imported order line, so the same line can never be stored twice
+const impId = key => ('imp-' + key.replace(/[^A-Za-z0-9]+/g, '_')).slice(0, 120) + '-' + String(Math.abs([...key].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7))).slice(0, 8);
+function normDate(s) { s = String(s || '').trim(); let m; if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ]/))) return `${m[1]}-${m[2]}-${m[3]}`; if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`; if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/))) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`; return null; }
 function openImport(kind) {
-  const cfg = IMPORT[kind]; IMP = { kind, ok: [], errs: [] };
+  const cfg = IMPORT[kind]; IMP = { kind, ok: [], errs: [], skip: [], same: 0, dupes: 0, noRef: 0 };
   openDrawer({
     title: cfg.title, sub: 'Paste CSV text or choose a .csv file. The first row must be the column names.', noFocus: true, saveLabel: 'Import', savedMsg: null,
     html: `<div class="fld" style="margin-bottom:12px"><span class="lab">Columns</span><code class="mono" style="display:block;padding:8px 10px;background:var(--sunken);border-radius:7px;overflow-x:auto;white-space:nowrap">${esc(cfg.cols)}</code><div class="help">${esc(cfg.help)}</div><div><button type="button" class="btn sm ghost" data-act="imptemplate">${icon('copy')}Copy column row</button></div></div>
       <div class="fld" style="margin-bottom:12px"><label for="impFile">CSV file</label><input type="file" id="impFile" accept=".csv,text/csv" data-ch="impfile"></div>
       <div class="fld"><label for="impText">Or paste CSV</label><textarea class="inp mono" id="impText" rows="9" placeholder="${esc(cfg.cols)}"></textarea></div>
       <div style="margin-top:10px">${btn('Check rows', 'impcheck', { sm: true })}</div><div id="impOut" style="margin-top:12px"></div>`,
-    onSave: async () => { checkImport(); if (!IMP.ok.length) { toast('Nothing to import yet. Paste rows and check them first.', 'bad'); return false; } await runImport(); return true; },
+    onSave: async () => { checkImport(); if (!IMP.ok.length) { toast(IMP.same ? `All ${IMP.same} rows are already imported with the same status. Nothing to change.` : 'Nothing to import yet. Paste rows and check them first.', IMP.same ? '' : 'bad'); return !!IMP.same && !IMP.errs.length; } await runImport(); return true; },
   });
 }
 function checkImport() {
-  const text = ($('#impText') || {}).value || ''; const rows = parseCSV(text); IMP.ok = []; IMP.errs = [];
+  const text = ($('#impText') || {}).value || ''; const rows = parseCSV(text); IMP.ok = []; IMP.errs = []; IMP.skip = []; IMP.same = 0; IMP.dupes = 0; IMP.noRef = 0;
   if (!rows.length) { $('#impOut').innerHTML = ''; return; }
   const head = rows[0].map(h => h.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_')); const idx = k => head.indexOf(k);
   const get = (r, k) => { const i = idx(k); return i < 0 ? '' : String(r[i] ?? '').trim(); };
@@ -39,37 +41,83 @@ function checkImport() {
       if (!ex && !name) return IMP.errs.push(`Row ${line}: name is required for a new product.`);
       if (!ex && !b) return IMP.errs.push(`Row ${line}: brand “${bc}” not found. Add the brand first.`);
       const vals = { name, category: get(r, 'category'), variant: get(r, 'variant'), mrp: numv(get(r, 'mrp')), sellingPrice: numv(get(r, 'selling_price')), costPrice: allow('costs') ? numv(get(r, 'cost_price')) : undefined, packagingCost: numv(get(r, 'packaging_cost')), gstRate: numv(get(r, 'gst_rate')), hsn: get(r, 'hsn'), weight: numv(get(r, 'weight_g')), openingStock: numv(get(r, 'opening_stock')), reorderLevel: numv(get(r, 'reorder_level')), location: get(r, 'location'), status: (get(r, 'status') || '').toLowerCase() };
+      const unit = get(r, 'unit').toLowerCase(); if (unit) { if (!UNITS.some(u => u[0] === unit)) return IMP.errs.push(`Row ${line}: unit “${unit}” isn’t one of ${UNITS.map(u => u[0]).join(', ')}.`); vals.unit = unit; }
+      const type = get(r, 'type').toLowerCase(); if (type === 'material' || type === 'master') Object.assign(vals, { kind: 'material', matType: get(r, 'material_type') || 'Other', colour: get(r, 'colour') || get(r, 'color'), grade: get(r, 'grade'), spec: get(r, 'spec') });
       for (const k in vals) if (vals[k] === '' || vals[k] === undefined || (typeof vals[k] === 'number' && !Number.isFinite(vals[k]))) delete vals[k];
       if (vals.status && !['active', 'draft', 'archived'].includes(vals.status)) delete vals.status;
-      IMP.ok.push({ ex, sku, brandId: b ? b.id : ex.brandId, vals });
+      if (!ex && !vals.kind && !(N(vals.sellingPrice) > 0)) return IMP.errs.push(`Row ${line}: selling_price is required for a new product.`);
+      IMP.ok.push({ ex, sku, brandId: b ? b.id : ex.brandId, vals, masterSku: get(r, 'master_sku').toUpperCase(), uses: get(r, 'uses'), line });
     } else {
-      const date = normDate(get(r, 'date')); const pn = get(r, 'platform').toLowerCase(); const pl = platforms().find(p => p.key === pn || p.name.toLowerCase() === pn || String(p.code || '').toLowerCase() === pn);
-      const p = S.products.find(x => String(x.sku || '').toUpperCase() === get(r, 'sku').toUpperCase()); const qty = Math.round(numv(get(r, 'qty')) || 0);
-      const sm = { delivered: 'delivered', 'in transit': 'transit', transit: 'transit', shipped: 'transit', returned: 'returned', return: 'returned', rto: 'returned', cancelled: 'cancelled', canceled: 'cancelled' }; const st = sm[get(r, 'status').toLowerCase()] || (get(r, 'status') ? null : 'delivered');
-      if (!date) return IMP.errs.push(`Row ${line}: date “${get(r, 'date')}” isn’t a date.`); if (!pl) return IMP.errs.push(`Row ${line}: platform “${get(r, 'platform')}” not found.`);
-      if (!p) return IMP.errs.push(`Row ${line}: SKU “${get(r, 'sku')}” not in the catalogue.`); if (qty < 1) return IMP.errs.push(`Row ${line}: quantity must be 1 or more.`); if (!st) return IMP.errs.push(`Row ${line}: status “${get(r, 'status')}” not recognised.`);
-      const up = numv(get(r, 'unit_price')); const unitPrice = Number.isFinite(up) && up > 0 ? up : (N(((p.listings || {})[pl.key] || {}).price) || N(p.sellingPrice)); const af = numv(get(r, 'actual_fees'));
-      IMP.ok.push({ doc: { date, platform: pl.key, productId: p.id, brandId: p.brandId, qty, unitPrice, status: st, restocked: true, orderRef: get(r, 'order_ref'), actualFees: Number.isFinite(af) ? af : null, calc: saleSnapshot({ unitPrice }, p, pl) } });
+      const c1 = (...ks) => { for (const k of ks) { const v = get(r, k); if (v !== '') return v; } return ''; };
+      const date = normDate(c1('date', 'purchase_date', 'order_date', 'ordered_on')); const amz = idx('amazon_order_id') >= 0;
+      const pn = (c1('platform', 'sales_channel', 'channel') || (amz ? 'amazon' : '')).toLowerCase().replace(/\.(in|com)$/, '').replace(/^amazon.*/, 'amazon'); const pl = platforms().find(p => p.key === pn || p.name.toLowerCase() === pn || String(p.code || '').toLowerCase() === pn);
+      const skuV = c1('sku', 'seller_sku', 'fsn'); const p = skuFind(skuV) || skuFind(c1('asin', 'listing_id', 'fsn')); const qtyRaw = numv(c1('qty', 'quantity', 'quantity_purchased', 'quantity_shipped')); const qty = Math.round((qtyRaw || 0) * 1000) / 1000;
+      const stRaw = c1('status', 'order_status', 'item_status', 'order_item_status').toLowerCase(); const st = saleStatusOf(stRaw);
+      if (!date) return IMP.errs.push(`Row ${line}: date “${c1('date', 'purchase_date', 'order_date')}” isn’t a date.`); if (!pl) return IMP.errs.push(`Row ${line}: platform “${pn}” not found.`);
+      if (!p) return IMP.errs.push(`Row ${line}: SKU “${skuV || c1('asin')}” isn’t a product, channel SKU or ASIN in the catalogue.`); if (!(qty > 0)) { if (st === 'cancelled' && qtyRaw === 0) return IMP.skip.push(line); return IMP.errs.push(`Row ${line}: quantity must be above 0.`); } if (!st) return IMP.errs.push(`Row ${line}: status “${stRaw}” not recognised.`);
+      const lineTotal = idx('unit_price') < 0 && idx('item_price') >= 0; const up0 = numv(c1('unit_price', 'item_price', 'price')); const up = Number.isFinite(up0) && up0 > 0 ? (lineTotal ? up0 / qty : up0) : NaN;
+      const unitPrice = Number.isFinite(up) && up > 0 ? Math.round(up * 100) / 100 : (N(((p.listings || {})[pl.key] || {}).price) || N(p.sellingPrice)); const af = numv(get(r, 'actual_fees'));
+      const orderRef = c1('order_ref', 'amazon_order_id', 'order_id', 'order_item_id'); const sz = sizeFrom(c1('length'), c1('width'), c1('size_unit'), c1('size', 'customization', 'custom_size'));
+      const ship = normDate(c1('ship_date', 'shipment_date', 'dispatched_on')); const rc = ({ good: 'good', sellable: 'good', damaged: 'bad', bad: 'bad', defective: 'bad', missing: 'missing', lost: 'missing', wrong: 'wrong' })[c1('return_condition', 'detailed_disposition').toLowerCase()] || null;
+      const doc = { date, platform: pl.key, productId: p.id, brandId: p.brandId, qty, unitPrice, status: st, restocked: true, orderRef, actualFees: Number.isFinite(af) ? af : null, calc: saleSnapshot({ unitPrice }, p, pl), ...(sz ? sz : {}), ...(ship && st !== 'pending' ? { shippedOn: ship } : {}), ...(st === 'returned' ? { retCondition: rc || 'good', retDate: TODAY(), restocked: (rc || 'good') === 'good' } : {}) };
+      const key = orderRef ? `${pl.key}|${orderRef}|${p.id}` : `${date}|${pl.key}|${p.id}|${qty}|${unitPrice}`;
+      const ex = S.sales.find(x => !x.splitFrom && x.platform === pl.key && x.productId === p.id && (orderRef ? x.orderRef === orderRef : (!x.orderRef && x.date === date && N(x.qty) === qty && N(x.unitPrice) === unitPrice)));
+      if (!orderRef) IMP.noRef++;
+      const prevIdx = IMP.ok.findIndex(x => x.key === key); if (prevIdx >= 0) { IMP.ok.splice(prevIdx, 1); IMP.dupes++; }
+      if (ex) { const ns = STOCK.statusMove(ex.status, st); const qChange = ex.status !== 'returned' && (N(ex.qty) !== qty || N(ex.unitPrice) !== unitPrice); if (ns === ex.status && !qChange) { IMP.same++; return; } IMP.ok.push({ key, ex, doc, ns, change: ns !== ex.status ? `${saleLabel(ex.status)} → ${saleLabel(ns)}` : 'quantity or price' }); }
+      else IMP.ok.push({ key, doc, line });
     }
   });
-  const upd = IMP.ok.filter(x => x.ex).length;
-  $('#impOut').innerHTML = `<div class="banner ${IMP.errs.length ? 'warn' : 'acc'}"><span><b>${num(IMP.ok.length)} rows ready</b>${upd ? ` (${upd} update existing products)` : ''}${IMP.errs.length ? `, ${IMP.errs.length} skipped` : ''}.</span></div>${IMP.errs.length ? `<ul class="muted" style="font-size:12.5px;margin:10px 0 0;padding-left:18px">${IMP.errs.slice(0, 20).map(e => `<li>${esc(e)}</li>`).join('')}${IMP.errs.length > 20 ? `<li>…and ${IMP.errs.length - 20} more</li>` : ''}</ul>` : ''}`;
+  if (IMP.kind === 'products') {
+    const inFile = new Map(IMP.ok.filter(x => x.vals.kind === 'material' && x.sku).map(x => [x.sku, x]));
+    IMP.ok = IMP.ok.filter(x => {
+      if (!x.masterSku) return true; const mEx = S.products.find(p => isMaterial(p) && String(p.sku || '').toUpperCase() === x.masterSku); const mNew = inFile.get(x.masterSku);
+      if (!mEx && !mNew) { IMP.errs.push(`Row ${x.line}: master_sku “${x.masterSku}” isn’t a master material (in the catalogue or this file).`); return false; }
+      if (x.vals.kind === 'material') { IMP.errs.push(`Row ${x.line}: a master material can’t take stock from another master.`); return false; }
+      const mu = mEx ? unitOf(mEx) : (mNew.vals.unit || 'pc'); const name = [x.vals.name || (x.ex || {}).name, x.vals.variant || (x.ex || {}).variant].filter(Boolean).join(' ');
+      const g = x.uses ? (STOCK.guess(x.uses, mu) || (N(x.uses) > 0 ? { qty: N(x.uses), unit: mu } : null)) : STOCK.guess(name, mu);
+      if (!g) { IMP.errs.push(`Row ${x.line}: can’t tell how much of ${x.masterSku} one unit uses. Add a uses column, e.g. ${STOCK.famOf(mu) === 'area' ? '12x18 in' : STOCK.famOf(mu) === 'mass' ? '100 g' : '50 ml'}.`); return false; }
+      x.part = clean({ sku: x.masterSku, qty: g.l ? null : g.qty, unit: g.unit || mu, l: g.l || null, w: g.w || null, dimUnit: g.l ? g.dimUnit : null }); return true;
+    });
+  }
+  const upd = IMP.ok.filter(x => x.ex).length; const sales = IMP.kind === 'sales';
+  const msg = sales ? `<b>${num(IMP.ok.length - upd)} new</b>, <b>${num(upd)} to update</b>${IMP.same ? `, ${num(IMP.same)} already imported (no change)` : ''}${IMP.dupes ? `, ${num(IMP.dupes)} repeated rows merged` : ''}${IMP.skip.length ? `, ${num(IMP.skip.length)} cancelled with 0 quantity skipped` : ''}${IMP.errs.length ? `, ${IMP.errs.length} with problems` : ''}.` : `<b>${num(IMP.ok.length)} rows ready</b>${upd ? ` (${upd} update existing products)` : ''}${IMP.errs.length ? `, ${IMP.errs.length} skipped` : ''}.`;
+  const changes = sales ? IMP.ok.filter(x => x.ex).slice(0, 6).map(x => `<li>${esc(x.doc.orderRef || fmtD(x.doc.date))} · ${esc((prodOf(x.doc.productId) || {}).sku || '')}: ${esc(x.change)}</li>`).join('') : '';
+  $('#impOut').innerHTML = `<div class="banner ${IMP.errs.length ? 'warn' : 'acc'}"><span>${msg}${sales && IMP.noRef ? ` ${num(IMP.noRef)} rows have no order id, so a later re-import can only match them by date, SKU, quantity and price.` : ''}</span></div>${changes ? `<ul class="muted" style="font-size:12.5px;margin:10px 0 0;padding-left:18px">${changes}</ul>` : ''}${IMP.errs.length ? `<ul class="muted" style="font-size:12.5px;margin:10px 0 0;padding-left:18px">${IMP.errs.slice(0, 20).map(e => `<li>${esc(e)}</li>`).join('')}${IMP.errs.length > 20 ? `<li>…and ${IMP.errs.length - 20} more</li>` : ''}</ul>` : ''}`;
+}
+// order status words from Amazon, Flipkart and others → ledger status
+function saleStatusOf(t) {
+  t = String(t || '').toLowerCase().trim(); if (!t) return 'delivered';
+  if (/cancel/.test(t)) return 'cancelled'; if (/return|rejected|rto/.test(t)) return 'returned'; if (/deliver|complete/.test(t)) return 'delivered';
+  if (/ship|transit|dispatch|picked|out for delivery|shipping/.test(t)) return 'transit'; if (/pending|unshipped|placed|new|approved|confirmed|ready|packed|processing/.test(t)) return 'pending';
+  return null;
+}
+// piece size from length / width / unit columns or one "12x18 in" cell
+function sizeFrom(l, w, u, txt) {
+  const du = ['in', 'cm', 'mm', 'ft'].includes(String(u || '').toLowerCase().replace(/inch(es)?/, 'in')) ? String(u).toLowerCase().replace(/inch(es)?/, 'in') : 'in';
+  if (N(l) > 0 && N(w) > 0) return { l: N(l), w: N(w), dimUnit: du };
+  const g = txt ? STOCK.guess(txt, 'sq ft') : null; return g && g.l ? { l: g.l, w: g.w, dimUnit: g.dimUnit } : null;
 }
 async function pool(items, n, fn, onProg) { let i = 0, done = 0; const workers = Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const it = items[i++]; await fn(it); done++; if (onProg) onProg(done, items.length); } }); await Promise.all(workers); }
 async function runImport() {
   const kind = IMP.kind; const items = IMP.ok.slice(); const now = nowISO(); const counters = {};
+  if (kind === 'products') { for (const x of items) x.id = x.ex ? x.ex.id : newId('products'); items.sort((a, b) => (b.vals.kind === 'material') - (a.vals.kind === 'material')); }
+  const idBySku = sku => { const it = items.find(y => y.sku === sku && y.vals.kind === 'material'); if (it) return it.id; const m = S.products.find(p => String(p.sku || '').toUpperCase() === sku); return m ? m.id : null; };
+  const linkOf = x => { if (!x.part) return {}; const { sku, ...rest } = x.part; const id = idBySku(sku); if (!id) return {}; const prev = x.ex && isLinked(x.ex) ? x.ex.link : null; return { link: clean({ at: prev ? prev.at || null : now, since: prev && !prev.at ? prev.since : null, parts: [...(prev ? prev.parts.filter(p => p.id !== id) : []), { id, ...rest }] }) }; };
   const docs = items.map(x => {
     if (kind === 'products') {
-      if (x.ex) return ['products/' + x.ex.id, clean({ ...base(x.ex), ...x.vals, updatedAt: now, updatedBy: ME.id })];
+      if (x.ex) return ['products/' + x.ex.id, clean({ ...base(x.ex), ...x.vals, ...linkOf(x), updatedAt: now, updatedBy: ME.id })];
       const bid = x.brandId; let sku = x.sku; if (!sku) { const b = brandOf(bid); const code = (b.code || 'SKU').toUpperCase(); counters[code] = counters[code] || +(nextSku(bid).split('-').pop()) - 1; counters[code]++; sku = code + '-' + String(counters[code]).padStart(4, '0'); }
-      return ['products/' + newId('products'), clean({ status: 'active', gstRate: 18, reorderLevel: 10, ...x.vals, sku, brandId: bid, listings: {}, createdAt: now, createdBy: ME.id, updatedAt: now, updatedBy: ME.id })];
+      return ['products/' + x.id, clean({ status: 'active', gstRate: 18, reorderLevel: 10, ...x.vals, ...linkOf(x), sku, brandId: bid, listings: {}, createdAt: now, createdBy: ME.id, updatedAt: now, updatedBy: ME.id })];
     }
-    return ['sales/' + newId('sales'), clean({ ...x.doc, createdAt: now, createdBy: ME.id, updatedAt: now, updatedBy: ME.id })];
+    if (x.ex) { const d = STOCK.stampSale(x.ex, { ...base(x.ex), status: x.ns, ...(x.ex.status !== 'returned' ? { qty: x.doc.qty, unitPrice: x.doc.unitPrice, calc: x.doc.calc } : {}), ...(x.ns === 'returned' && x.ex.status !== 'returned' ? { retCondition: x.doc.retCondition, retDate: x.doc.retDate, restocked: x.doc.restocked } : {}), ...(x.doc.shippedOn && !x.ex.shippedOn ? { shippedOn: x.doc.shippedOn } : {}), ...(x.doc.l && !x.ex.l ? { l: x.doc.l, w: x.doc.w, dimUnit: x.doc.dimUnit } : {}) }, TODAY()); return ['sales/' + x.ex.id, clean({ ...d, updatedAt: now, updatedBy: ME.id })]; }
+    const sid = x.doc.orderRef ? impId(x.key) : newId('sales');
+    return ['sales/' + sid, clean({ ...STOCK.stampSale(null, x.doc, TODAY()), importKey: x.key, createdAt: now, createdBy: ME.id, updatedAt: now, updatedBy: ME.id })];
   });
   toast(`Importing ${docs.length} rows…`);
   await pool(docs, 3, ([path, d]) => dbWrite('set', path, d), (d, t) => { if (d % 10 === 0 || d === t) toast(`Importing… ${d} of ${t}`); });
-  addLog('import', kind === 'products' ? 'catalogue' : 'finance', `Imported ${docs.length} ${kind === 'products' ? 'products' : 'sales entries'} from CSV`, `${items.filter(x => x.ex).length} updated, ${IMP.errs.length} rows skipped`);
-  toast(`Imported ${docs.length} ${kind === 'products' ? 'products' : 'sales entries'}`);
+  addLog('import', kind === 'products' ? 'catalogue' : 'finance', `Imported ${docs.length} ${kind === 'products' ? 'products' : 'orders / sales entries'} from CSV`, `${items.filter(x => x.ex).length} updated, ${kind === 'sales' ? `${IMP.same} already imported, ` : ''}${IMP.errs.length} rows skipped`);
+  toast(kind === 'sales' ? `Imported: ${items.filter(x => !x.ex).length} new, ${items.filter(x => x.ex).length} updated${IMP.same ? `, ${IMP.same} already there` : ''}` : `Imported ${docs.length} products`);
 }
 
 /* ---------- demo data ---------- */

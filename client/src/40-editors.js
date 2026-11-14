@@ -126,11 +126,15 @@ EDIT.move = (id, preset = {}) => {
 EDIT.sale = (id, preset = {}) => {
   const s = id ? S.sales.find(x => x.id === id) : null; const can = canEdit('finance') && secOK('sales');
   if (!S.products.length) { toast('Add products in the Catalogue first.', 'bad'); return; }
-  const v0 = s ? { ...s, retCondition: s.retCondition || (s.restocked === false ? 'bad' : 'good') } : { date: TODAY(), qty: 1, status: 'delivered', platform: (activePlatforms()[0] || {}).key, retCondition: 'good', ...preset };
+  const v0 = s ? { ...s, retCondition: s.retCondition || (s.restocked === false ? 'bad' : 'good'), dimUnit: s.dimUnit || 'in' } : { date: TODAY(), qty: 1, status: 'delivered', platform: (activePlatforms()[0] || {}).key, retCondition: 'good', dimUnit: 'in', ...preset };
+  // products cut to the customer's size: the size of each piece decides how much master stock it uses
+  const sizedIds = S.products.filter(p => isLinked(p) && p.link.parts.some(x => x && x.sized)).map(p => p.id); const sizedWhen = 'productId:' + (sizedIds.join('|') || '-');
   const f = [
     { n: 'date', l: 'Order date', t: 'date', req: 1 }, { n: 'platform', l: 'Platform', t: 'select', req: 1, o: () => platOpts(v0.platform) },
     { n: 'productId', l: 'Product', t: 'select', req: 1, full: 1, o: () => { const o = prodOpts(); if (s && !o.some(x => x[0] === s.productId) && prodOf(s.productId)) o.push([s.productId, prodOf(s.productId).name]); return o; }, blank: 'Choose a product…' },
     { n: 'qty', l: 'Quantity', t: 'number', req: 1, min: 0, step: 'any', help: 'In the product’s unit (pieces, sq ft, metres…). Decimals are fine.' }, { n: 'unitPrice', l: 'Price per unit (incl. GST)', t: 'money', min: 0, help: 'Blank uses the product’s price on this platform.' },
+    { n: 'l', l: 'Length of each piece', t: 'number', min: 0, step: 'any', when: sizedWhen, help: 'The size the customer ordered. Stock used = L × W × quantity.' }, { n: 'w', l: 'Width of each piece', t: 'number', min: 0, step: 'any', when: sizedWhen },
+    { n: 'dimUnit', l: 'Size in', t: 'select', o: [['in', 'Inches'], ['cm', 'Centimetres'], ['mm', 'Millimetres'], ['ft', 'Feet']], when: sizedWhen },
     { n: 'status', l: 'Status', t: 'select', o: SALE_STATUS }, { n: 'orderRef', l: 'Order or settlement ref', mono: 1, ph: 'e.g. 402-1234567-1234567' },
     { n: 'retCondition', l: 'It came back', t: 'select', o: () => RET_COND, when: 'status:returned' }, { n: 'retDate', l: 'Return received on', t: 'date', when: 'status:returned' },
     { n: 'customerId', l: 'Customer', t: 'select', o: () => S.customers.slice().sort((a, b) => (a.name > b.name ? 1 : -1)).map(c => [c.id, c.name + (c.city ? ' · ' + c.city : '')]), blank: 'No customer record' },
@@ -147,7 +151,9 @@ EDIT.sale = (id, preset = {}) => {
       const p = prodOf(v.productId); const pl = PL(v.platform);
       const unitPrice = v.unitPrice !== null ? v.unitPrice : (N(((p.listings || {})[v.platform] || {}).price) || N(p.sellingPrice));
       const changed = !s || s.productId !== v.productId || s.platform !== v.platform || N(s.unitPrice) !== N(unitPrice);
-      const ret = v.status === 'returned'; const doc = { ...base(s), ...v, qty: rq3(N(v.qty)), unitPrice, brandId: p.brandId, retCondition: ret ? (v.retCondition || 'good') : null, retDate: ret ? (v.retDate || (s && s.retDate) || TODAY()) : null, restocked: ret ? (v.retCondition || 'good') === 'good' : true, customerId: v.customerId || null, calc: changed ? saleSnapshot({ ...v, unitPrice }, p, pl) : s.calc };
+      const ret = v.status === 'returned'; const sized = sizedIds.includes(v.productId) && N(v.l) > 0 && N(v.w) > 0;
+      const doc0 = { ...base(s), ...v, l: sized ? N(v.l) : null, w: sized ? N(v.w) : null, dimUnit: sized ? v.dimUnit || 'in' : null, qty: rq3(N(v.qty)), unitPrice, brandId: p.brandId, retCondition: ret ? (v.retCondition || 'good') : null, retDate: ret ? (v.retDate || (s && s.retDate) || TODAY()) : null, restocked: ret ? (v.retCondition || 'good') === 'good' : true, customerId: v.customerId || null, calc: changed ? saleSnapshot({ ...v, unitPrice }, p, pl) : s.calc };
+      const doc = STOCK.stampSale(s, doc0, TODAY());
       await saveDoc('sales', id, doc, ['finance', `Sale ${v.qty} × ${p.sku} on ${pl.name}${v.orderRef ? ' (' + v.orderRef + ')' : ''}`]);
     },
     onDelete: s ? delFn('sales', id, 'finance', `Sale ${s.qty} × ${(prodOf(s.productId) || {}).sku || ''} on ${PL(s.platform).name}${s.orderRef ? ' (' + s.orderRef + ')' : ''}`) : null,

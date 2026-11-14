@@ -4,7 +4,7 @@ const fs = require('fs'); const path = require('path'); const crypto = require('
 const SRC = path.join(__dirname, 'src'); const OUT = path.join(__dirname, 'public'); const ROOT = path.join(__dirname, '..');
 fs.mkdirSync(OUT, { recursive: true });
 const parts = fs.readdirSync(SRC).filter(f => f.endsWith('.js')).sort();
-const js = ['/* Triagon ERP web — built ' + new Date().toISOString() + ' */', fs.readFileSync(path.join(ROOT, 'shared', 'model.js'), 'utf8'), ...parts.map(f => `/* ---- ${f} ---- */\n` + fs.readFileSync(path.join(SRC, f), 'utf8'))].join('\n');
+const js = ['/* Triagon ERP web — built ' + new Date().toISOString() + ' */', fs.readFileSync(path.join(ROOT, 'shared', 'model.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'shared', 'stock.js'), 'utf8'), ...parts.map(f => `/* ---- ${f} ---- */\n` + fs.readFileSync(path.join(SRC, f), 'utf8'))].join('\n');
 const css = fs.readdirSync(SRC).filter(f => f.endsWith('.css')).sort().map(f => fs.readFileSync(path.join(SRC, f), 'utf8')).join('\n');
 const h = s => crypto.createHash('sha1').update(s).digest('hex').slice(0, 10);
 fs.writeFileSync(path.join(OUT, 'app.js'), js); fs.writeFileSync(path.join(OUT, 'app.css'), css);

@@ -50,7 +50,7 @@ function saleSnapshot(store, s, prod) {
 function saleFin(s) {
   const q = N(s.qty), price = N(s.unitPrice); const c = s.calc || {};
   const r = { units: 0, gross: 0, returns: 0, taxable: 0, cogs: 0, fees: 0, settlement: 0, profit: 0 };
-  if (s.status === 'cancelled') return r; r.gross = price * q;
+  if (s.status === 'cancelled' || s.status === 'pending') return r; r.gross = price * q;
   if (s.status === 'returned') { r.returns = price * q; r.fees = (N(c.shipping) + N(c.returnCost)) * q; r.settlement = -r.fees * (1 + N(c.gstFeeRate)); r.cogs = (isRestocked(s) ? 0 : N(c.cost) * q) + N(c.cost) * N(s.wasteQty); r.profit = -r.cogs - r.fees - N(c.pack) * q; return r; }
   r.units = q; r.taxable = N(c.taxable) * q; r.cogs = N(c.cost) * (q + N(s.wasteQty)); r.fees = s.actualFees != null && s.actualFees !== '' ? N(s.actualFees) : N(c.fees) * q;
   r.settlement = r.gross - r.fees * (1 + N(c.gstFeeRate)) - (N(c.tcs) + N(c.tds)) * q; r.profit = r.taxable - r.cogs - r.fees - N(c.pack) * q; return r;
@@ -58,13 +58,11 @@ function saleFin(s) {
 const isRestocked = s => s.retCondition ? s.retCondition === 'good' : s.restocked !== false;
 // wasteQty: extra stock used when cutting a custom size (leather offcuts); it is never restocked
 const saleStockOut = s => { const q = N(s.qty); if (s.status === 'cancelled') return 0; const w = N(s.wasteQty); if (s.status === 'returned') return (isRestocked(s) ? 0 : q) + w; return q + w; };
-function stock(store) {
-  const good = {}, bad = {};
-  for (const { id, data } of store.list('products')) { good[id] = N(data.openingStock); bad[id] = 0; }
-  for (const { data: m } of store.list('moves')) if (m.productId in good) { good[m.productId] += N(m.qty); bad[m.productId] += N(m.badQty); }
-  for (const { data: s } of store.list('sales')) if (s.productId in good) { good[s.productId] -= saleStockOut(s); if (s.status === 'returned' && s.retCondition === 'bad') bad[s.productId] += N(s.retQty || s.qty); }
-  return { good, bad };
-}
+// stock from the shared engine (same code the browser runs)
+const STOCK = require('../shared/stock.js');
+const rows = (store, col) => store.list(col).map(x => ({ id: x.id, ...x.data }));
+function stockEngine(store) { return STOCK.compute({ products: rows(store, 'products'), moves: rows(store, 'moves'), sales: rows(store, 'sales'), orders: rows(store, 'orders'), settings: store.get('settings/stock'), today: today() }); }
+function stock(store) { const R = stockEngine(store); return { good: R.on, bad: R.bad, open: R.open, R }; }
 /* attendance */
 const hm = s => { const [h, m] = String(s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const minsOf = iso => { const d = new Date(iso); return d.getHours() * 60 + d.getMinutes(); };
@@ -77,4 +75,4 @@ function attToday(store, e, d = today()) {
   const lateMin = first ? Math.max(0, minsOf(first) - hm(sh.start)) : 0;
   return { rec, sess, mins, open, first, lastOut: last && last.out ? last.out : null, late: !!first && lateMin > sh.grace, lateMin, mark: rec && rec.mark };
 }
-module.exports = { N, pad, ymd, today, addDays, sum, DEFAULT_PLATFORMS, platforms, PL, effPlat, unitEcon, saleSnapshot, saleFin, saleStockOut, isRestocked, stock, attSettings, empShift, attToday, hm, minsOf };
+module.exports = { N, pad, ymd, today, addDays, sum, DEFAULT_PLATFORMS, platforms, PL, effPlat, unitEcon, saleSnapshot, saleFin, saleStockOut, isRestocked, stock, stockEngine, STOCK, attSettings, empShift, attToday, hm, minsOf };

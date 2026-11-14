@@ -8,16 +8,22 @@ const MV = [
   ['adjust_remove', 'Adjustment: remove', -1, 0, 'out'], ['damaged', 'Damaged, written off from sellable', -1, 0, 'out'], ['count', 'Physical count (set on-hand)', 0, 0, 'count'],
   ['mark_bad', 'Move sellable → damaged', -1, 1, 'bad'], ['bad_repair', 'Repaired: damaged → sellable', 1, -1, 'bad'], ['bad_writeoff', 'Write off damaged stock', 0, -1, 'bad'], ['bad_rtv', 'Return damaged stock to vendor', 0, -1, 'bad'], ['qc_reject', 'Rejected at receiving (QC)', 0, 1, 'bad'],
 ];
+const COUNT_AT = [['end', 'End of the day (that day’s sales already gone)'], ['start', 'Start of the day (before that day’s sales)']];
+// stock as it stood when a count was taken (end of its day, or end of the day before), leaving one count out
+function countBase(pid, date, at, exclId) { return countBaseAll(date, at, exclId)[pid] || 0; }
+function countBaseAll(date, at, exclId) { return STOCK.compute({ products: S.products, moves: exclId ? S.moves.filter(x => x.id !== exclId) : S.moves, sales: S.sales, orders: S.orders, settings: S.settings.stock, asOf: at === 'start' ? addDays(date, -1) : date }).on; }
 const mvOf = k => MV.find(m => m[0] === k) || [k, k, 1, 0, 'in'];
-const mvLabel = m => m.poId ? (m.type === 'qc_reject' ? 'PO receipt · rejected' : 'PO receipt') : mvOf(m.type)[1];
+const mvLabel = m => m.poId ? (m.type === 'qc_reject' ? 'PO receipt · rejected' : 'PO receipt') : m.type === 'count' && m.setTo !== undefined && m.setTo !== null ? `Physical count → ${qty(m.setTo)}` : mvOf(m.type)[1];
 const MV_PICK = MV.filter(m => m[0] !== 'qc_reject');
 
 V.inventory = () => {
   const can = canEdit('inventory'); const tab = tabOf('inv', 'stock');
-  const A = { stock: can ? btn('Bulk movement', 'bulkmove', { i: 'layers' }) + btn('Record movement', 'new:move', { pri: true, i: 'plus' }) : '', moves: can ? btn('Bulk movement', 'bulkmove', { i: 'layers' }) + btn('Record movement', 'new:move', { pri: true, i: 'plus' }) : '', damaged: can ? btn('Move stock to damaged', 'mvpreset:mark_bad', { pri: true, i: 'plus' }) : '', pos: can ? btn('New purchase order', 'new:po', { pri: true, i: 'plus' }) : '', invoices: canEdit('inventory') || canEdit('finance') ? btn('Purchase settings', 'purchset', { i: 'folder' }) + btn('Add purchase invoice', 'new:pinvoice', { pri: true, i: 'plus' }) : '', suppliers: can ? btn('Add vendor', 'new:supplier', { pri: true, i: 'plus' }) : '' };
+  const A = { masters: (canEdit('catalogue') ? btn('New master material', 'newmat', { pri: !can, i: 'plus' }) : '') + (can ? btn('Physical count', 'mvpreset:count', { i: 'check' }) : ''), stock: can ? btn('Bulk movement', 'bulkmove', { i: 'layers' }) + btn('Record movement', 'new:move', { pri: true, i: 'plus' }) : '', moves: can ? btn('Bulk movement', 'bulkmove', { i: 'layers' }) + btn('Record movement', 'new:move', { pri: true, i: 'plus' }) : '', damaged: can ? btn('Move stock to damaged', 'mvpreset:mark_bad', { pri: true, i: 'plus' }) : '', pos: can ? btn('New purchase order', 'new:po', { pri: true, i: 'plus' }) : '', invoices: canEdit('inventory') || canEdit('finance') ? btn('Purchase settings', 'purchset', { i: 'folder' }) + btn('Add purchase invoice', 'new:pinvoice', { pri: true, i: 'plus' }) : '', suppliers: can ? btn('Add vendor', 'new:supplier', { pri: true, i: 'plus' }) : '' };
   let html = ph('Inventory & purchasing', 'Stock is counted in each product’s own unit (pieces, sq ft, metres, kg) and worked out from opening stock, movements, received purchase orders and the sales ledger, so it never drifts from your records.', A[tab] || '');
   const openPO = S.pos.filter(p => p.status === 'ordered' || p.status === 'partial').length; const badN = Object.values(badMap()).filter(x => x > 0).length; const unpaid = S.pinvoices.filter(b => pinvDue(b) > 0.5).length;
-  html += tabsHTML('inv', [['stock', 'Stock levels'], ['moves', 'Movements'], ['damaged', 'Damaged & rejected', badN || ''], ['pos', 'Purchase orders', openPO ? openPO + ' open' : ''], ['invoices', 'Purchase invoices', unpaid ? unpaid + ' unpaid' : ''], ['suppliers', 'Vendors', S.suppliers.length]], tab);
+  const lowM = S.products.filter(p => isMaterial(p) && p.status !== 'archived' && ['low', 'out'].includes(stockState(p).st)).length;
+  html += tabsHTML('inv', [['stock', 'Stock levels'], ['masters', 'Master stock', lowM ? lowM + ' low' : ''], ['moves', 'Movements'], ['damaged', 'Damaged & rejected', badN || ''], ['pos', 'Purchase orders', openPO ? openPO + ' open' : ''], ['invoices', 'Purchase invoices', unpaid ? unpaid + ' unpaid' : ''], ['suppliers', 'Vendors', S.suppliers.length]], tab);
+  if (tab === 'masters') return html + invMasters(can);
   if (tab === 'moves') return html + invMoves2(can);
   if (tab === 'damaged') return html + invDamaged(can);
   if (tab === 'pos') return html + invPOs2();
@@ -26,9 +32,9 @@ V.inventory = () => {
   return html + invStock(can);
 };
 function invStock(can) {
-  const ps = S.products.filter(p => inBrand(p) && p.status !== 'archived').map(p => ({ p, ...stockState(p), bad: badMap()[p.id] || 0 }));
+  const ps = S.products.filter(p => inBrand(p) && p.status !== 'archived').map(p => ({ p, ...stockState(p), own: stockMap()[p.id] || 0, bad: badMap()[p.id] || 0 }));
   const costs = allow('costs'); const c = k => ps.filter(x => x.st === k).length;
-  const vCost = sum(ps, x => Math.max(0, x.on) * N(x.p.costPrice)), vRet = sum(ps, x => Math.max(0, x.on) * N(x.p.sellingPrice)), vBad = sum(ps, x => Math.max(0, x.bad) * N(x.p.costPrice));
+  const vCost = sum(ps, x => Math.max(0, x.own) * N(x.p.costPrice)), vRet = sum(ps.filter(x => !x.linked), x => Math.max(0, x.own) * N(x.p.sellingPrice)), vBad = sum(ps, x => Math.max(0, x.bad) * N(x.p.costPrice));
   let html = kpis([
     { l: 'Active SKUs', v: num(ps.length), s: num(new Set(ps.map(x => x.p.brandId)).size) + ' brands' },
     costs ? { l: 'Stock at cost', v: inrS(vCost), title: inr(vCost) } : { l: 'Overstock', v: num(c('over')) },
@@ -38,30 +44,37 @@ function invStock(can) {
     { l: 'Out of stock', v: num(c('out')) },
   ]);
   const f = filtOf('stock', 'all');
-  const rows = ps.filter(x => (f === 'all' || x.st === f) && matchQ('inv', x.p.name, x.p.sku, x.p.location, brandName(x.p.brandId)));
-  html += `<div class="toolbar">${searchHTML('inv', 'Search product, SKU, location…')}${chipsHTML('stock', [['all', 'All', ps.length], ['out', 'Out', c('out')], ['low', 'Low', c('low')], ['over', 'Overstock', c('over')], ['ok', 'Healthy', c('ok')]], f)}<span class="sp"></span>${exportBtn('exportstock2', 'Export')}</div>`;
+  const rows = ps.filter(x => (f === 'all' || (f === 'linked' ? x.linked : f === 'master' ? isMaterial(x.p) : x.st === f)) && matchQ('inv', x.p.name, x.p.sku, x.p.location, brandName(x.p.brandId), ...(x.masters || []).map(m => m.m.name)));
+  html += `<div class="toolbar">${searchHTML('inv', 'Search product, SKU, location…')}${chipsHTML('stock', [['all', 'All', ps.length], ['out', 'Out', c('out')], ['low', 'Low', c('low')], ['over', 'Overstock', c('over')], ['ok', 'Healthy', c('ok')], ['master', 'Masters', ps.filter(x => isMaterial(x.p)).length], ['linked', 'Use a master', ps.filter(x => x.linked).length]], f)}<span class="sp"></span>${exportBtn('exportstock2', 'Export')}</div>`;
   if (can) html += selBar('stock', btn('Record movement for selected', 'bulkmovesel', { sm: true, i: 'layers' }) + btn('Raise PO for selected', 'posel', { sm: true, i: 'truck' }));
   html += panel('', table('stock', [
     { k: 'p', l: 'Product', render: x => prodCell(x.p), sort: x => x.p.name },
     { k: 'loc', l: 'Location', render: x => esc(x.p.location || '—'), sort: x => x.p.location || '' },
-    { k: 'on', l: 'On hand', num: 1, render: x => `<b class="${x.on <= 0 ? 'neg' : ''}">${qty(x.on)}</b> <small class="muted">${esc(unitOf(x.p))}</small>${isPU(x.p.purchaseFactor) && x.p.purchaseUnit ? `<br><small class="muted">≈ ${qty(x.on / N(x.p.purchaseFactor))} ${esc(x.p.purchaseUnit)}</small>` : ''}` },
+    { k: 'on', l: 'On hand', num: 1, render: x => x.linked ? `<b class="${x.on <= 0 ? 'neg' : ''}">${qty(x.on)}</b> <small class="muted">${esc(unitOf(x.p))}</small><br><small class="muted" title="Stock comes from the master">from ${esc(x.masters.map(m => m.m.name).join(' + '))}</small>` : `<b class="${x.on <= 0 ? 'neg' : ''}">${qty(x.on)}</b> <small class="muted">${esc(unitOf(x.p))}</small>${isPU(x.p.purchaseFactor) && x.p.purchaseUnit ? `<br><small class="muted">≈ ${qty(x.on / N(x.p.purchaseFactor))} ${esc(x.p.purchaseUnit)}</small>` : ''}${x.com ? `<br><small class="muted">${qty(x.com)} committed</small>` : ''}` },
     { k: 'bad', l: 'Damaged', num: 1, render: x => x.bad ? `<span class="neg">${qty(x.bad)}</span>` : '—' },
     { k: 'ord', l: 'On order', num: 1, render: x => x.ord ? qty(x.ord) : '—' },
-    { k: 'rl', l: 'Reorder at', num: 1, render: x => qty(x.rl) },
+    { k: 'rl', l: 'Reorder at', num: 1, render: x => x.linked ? '<span class="muted">master</span>' : qty(x.rl) },
     { k: 'v', l: '30-day sales', num: 1, render: x => qty(x.v) },
     { k: 'cover', l: 'Days left', num: 1, render: x => Number.isFinite(x.cover) ? num(x.cover) : '—' },
-    { k: 'val', l: 'Value at cost', num: 1, cost: 1, render: x => inr(Math.max(0, x.on) * N(x.p.costPrice)), sort: x => Math.max(0, x.on) * N(x.p.costPrice) },
+    { k: 'val', l: 'Value at cost', num: 1, cost: 1, render: x => x.linked ? '<span class="muted">in master</span>' : inr(Math.max(0, x.own) * N(x.p.costPrice)), sort: x => Math.max(0, x.own) * N(x.p.costPrice) },
     { k: 'st', l: 'Status', render: x => pill(...STOCK_PILL[x.st]), sort: x => ({ out: 0, low: 1, ok: 2, over: 3 })[x.st] },
-    { k: 'a', l: '', nosort: 1, render: x => can ? `<span style="display:inline-flex;gap:6px">${btn('Adjust', 'stockin:' + x.p.id, { sm: true })}${(x.st === 'low' || x.st === 'out') ? btn('Order', 'poprod:' + x.p.id, { sm: true }) : ''}</span>` : '' },
+    { k: 'a', l: '', nosort: 1, render: x => { if (!can) return ''; const t = x.linked ? x.masters[0].m : x.p; return `<span style="display:inline-flex;gap:6px">${btn(x.linked ? 'Adjust master' : 'Adjust', 'stockin:' + t.id, { sm: true })}${(x.st === 'low' || x.st === 'out') ? btn('Order', 'poprod:' + t.id, { sm: true }) : ''}</span>`; } },
   ], rows, { select: can, key: x => x.p.id, sort: { k: 'st', dir: 'asc' }, empty: S.products.length ? undefined : empty('No products yet', 'Stock appears here once you add products in the Catalogue.', canEdit('catalogue') ? btn('Add product', 'new:product', { pri: true }) : '') }), { flush: true });
   return html;
 }
 function invMoves2(can) {
   const r = periodRange(); const rows = [];
   S.moves.filter(m => inRange(m.date, r) && inBrand(m)).forEach(m => rows.push({ id: m.id, kind: 'move', m, date: m.date, type: mvLabel(m), tone: N(m.qty) > 0 ? 't-good' : N(m.qty) < 0 ? 't-bad' : 't-warn', productId: m.productId, qty: N(m.qty), bad: N(m.badQty), ref: [m.ref, m.supplier].filter(Boolean).join(' · '), by: m.createdBy, po: !!m.poId }));
-  S.sales.filter(s => inRange(s.date, r) && inBrand(s)).forEach(s => { const out = saleStockOut(s); const rc = s.retCondition || (s.restocked === false ? 'bad' : 'good'); const lbl = s.status === 'returned' ? 'Return · ' + ({ good: 'restocked', bad: 'to damaged', missing: 'not received', wrong: 'wrong item' })[rc] : s.status === 'cancelled' ? 'Cancelled sale' : 'Sale · ' + PL(s.platform).name; rows.push({ id: s.id, kind: 'sale', date: s.date, type: lbl, tone: 't-neu', productId: s.productId, qty: -out, bad: s.status === 'returned' && rc === 'bad' ? N(s.qty) : 0, ref: s.orderRef || '', by: s.createdBy }); });
+  for (const [iid, list] of Object.entries(stockEngine().ev)) {
+    const ip = prodOf(iid); if (!ip || !inBrand(ip)) continue;
+    for (const e of list) {
+      if (!['sale', 'order', 'return', 'bad'].includes(e.k) || !inRange(e.d, r)) continue; const src = e.src || {}; const sold = prodOf(e.pid); const via = e.pid !== iid && sold ? ` · ${sold.sku || sold.name}` : '';
+      const lbl = e.k === 'order' ? `Order ${src.number || ''} (${soLabel(src.status).toLowerCase()})` : e.k === 'return' ? 'Return · restocked' : e.k === 'bad' ? 'Return · to damaged' : src.orderId ? `Order ${src.orderRef || ''}` : 'Sale · ' + PL(src.platform).name;
+      rows.push({ id: src.id + '|' + iid + '|' + e.k, kind: 'sale', date: e.d, type: lbl + via + (e.counted ? ' · before count' : ''), tone: e.counted ? 't-neu' : e.k === 'return' ? 't-good' : 't-neu', productId: iid, qty: e.q, bad: e.b || 0, ref: (src.orderRef || src.number || '') + (src.l && src.w ? ` · ${qty(src.l)} × ${qty(src.w)} ${src.dimUnit || 'in'}` : ''), by: src.createdBy, open: e.k === 'order' ? 'open:order:' + src.id : 'open:sale:' + src.id });
+    }
+  }
   const f = filtOf('mv', 'all'); const shown = rows.filter(x => f === 'all' || x.kind === f).filter(x => matchQ('mv', (prodOf(x.productId) || {}).name, (prodOf(x.productId) || {}).sku, x.ref, x.type));
-  let html = `<div class="toolbar">${searchHTML('mv', 'Search product, reference…')}${chipsHTML('mv', [['all', 'All', rows.length], ['move', 'Stock movements', rows.filter(x => x.kind === 'move').length], ['sale', 'From sales ledger', rows.filter(x => x.kind === 'sale').length]], f)}</div>`;
+  let html = `<div class="toolbar">${searchHTML('mv', 'Search product, reference…')}${chipsHTML('mv', [['all', 'All', rows.length], ['move', 'Stock movements', rows.filter(x => x.kind === 'move').length], ['sale', 'From sales & orders', rows.filter(x => x.kind === 'sale').length]], f)}</div>`;
   if (can) html += selBar('moves', btn('Delete selected', 'bulkdelmoves', { sm: true, i: 'trash', cls: 'danger' }));
   const unitCell = (x, v) => { const p = prodOf(x.productId); return `${v > 0 ? '+' : ''}${qty(v)} <small class="muted">${esc(unitOf(p))}</small>`; };
   html += panel('', table('moves', [
@@ -72,7 +85,7 @@ function invMoves2(can) {
     { k: 'bad', l: 'Damaged', num: 1, render: x => x.bad ? `<span class="${x.bad > 0 ? 'neg' : 'pos'}">${unitCell(x, x.bad)}</span>` : '—' },
     { k: 'ref', l: 'Reference', render: x => esc(x.ref || '—') },
     { k: 'by', l: 'By', render: x => x.by ? esc(personName(x.by)) : '—', sort: x => personName(x.by) },
-  ], shown, { select: can, key: x => x.kind + '|' + x.id, sort: { k: 'date', dir: 'desc' }, limit: 150, open: x => x.kind === 'move' ? 'open:move:' + x.id : (canView('finance') && secOK('sales') ? 'open:sale:' + x.id : ''), empty: empty('No movements in this period', 'Purchases, adjustments, damage and sales for the selected period appear here.') }), { flush: true });
+  ], shown, { select: can, key: x => x.kind + '|' + x.id, sort: { k: 'date', dir: 'desc' }, limit: 150, open: x => x.kind === 'move' ? 'open:move:' + x.id : x.open && x.open.startsWith('open:order:') ? (canView('orders') ? x.open : '') : (canView('finance') && secOK('sales') ? x.open : ''), empty: empty('No movements in this period', 'Purchases, adjustments, damage and sales for the selected period appear here.') }), { flush: true });
   return html;
 }
 function invDamaged(can) {
@@ -94,13 +107,14 @@ function invDamaged(can) {
 EDIT.move = (id, preset = {}) => {
   const m = id ? S.moves.find(x => x.id === id) : null; const can = canEdit('inventory') && !(m && m.poId); const costs = allow('costs');
   if (!S.products.length) { toast('Add products in the Catalogue first.', 'bad'); return; }
-  const v0 = m ? { ...m, qty: m.entered ?? Math.abs(N(m.qty) || N(m.badQty)), inUnit: m.enteredUnit === 'purchase' ? 'purchase' : 'stock', unitCost: m.unitCost === null || m.unitCost === undefined ? null : Math.round(N(m.unitCost) * (m.enteredUnit === 'purchase' ? (N((prodOf(m.productId) || {}).purchaseFactor) || 1) : 1) * 100) / 100 } : { type: 'purchase', date: TODAY(), updateCost: true, inUnit: 'stock', ...preset };
+  const v0 = m ? { ...m, countAt: m.countAt || 'end', qty: m.type === 'count' && m.setTo !== undefined && m.setTo !== null ? (m.entered ?? m.setTo) : m.entered ?? Math.abs(N(m.qty) || N(m.badQty)), inUnit: m.enteredUnit === 'purchase' ? 'purchase' : 'stock', unitCost: m.unitCost === null || m.unitCost === undefined ? null : Math.round(N(m.unitCost) * (m.enteredUnit === 'purchase' ? (N((prodOf(m.productId) || {}).purchaseFactor) || 1) : 1) * 100) / 100 } : { type: 'purchase', date: TODAY(), updateCost: true, inUnit: 'stock', countAt: 'end', ...preset };
   const p0 = prodOf(v0.productId); const u = unitOf(p0);
   const unitOpts = p => { const pu = p && p.purchaseUnit && isPU(p.purchaseFactor); return [['stock', unitOf(p)], ...(pu ? [['purchase', `${p.purchaseUnit} (1 = ${qty(p.purchaseFactor)} ${unitOf(p)})`]] : [])]; };
   const f = [
-    { n: 'productId', l: 'Product', t: 'select', req: 1, full: 1, o: () => prodOptsWith(v0.productId), blank: 'Choose a product…', ch: 'mvprod' },
-    { n: 'type', l: 'Movement', t: 'select', req: 1, o: (m && m.type === 'qc_reject' ? MV : MV_PICK).map(x => [x[0], x[1]]), ch: 'mvtype' },
+    { n: 'productId', l: 'Product', t: 'select', req: 1, full: 1, o: () => stockOptsWith(v0.productId), blank: 'Choose a product…', ch: 'mvprod', help: 'Products that take their stock from a master aren’t listed: record their movements on the master.' },
+    { n: 'type', l: 'Movement', t: 'select', req: 1, o: (m && !MV_PICK.some(x => x[0] === m.type) ? [...MV_PICK, mvOf(m.type)] : MV_PICK).map(x => [x[0], x[1]]), ch: 'mvtype' },
     { n: 'date', l: 'Date', t: 'date', req: 1 },
+    { n: 'countAt', l: 'Counted at', t: 'select', o: COUNT_AT, when: 'type:count', help: 'Sales and movements dated before the count are taken as already reflected in it, so they are never deducted again — even if they are imported later.' },
     { n: 'qty', l: 'Quantity', t: 'number', req: 1, min: 0, step: 'any', help: 'Decimals are fine, e.g. 12.5 sq ft. For a physical count, enter the quantity you counted.' },
     { n: 'inUnit', l: 'Entered in', t: 'select', o: () => unitOpts(p0) },
     { n: 'unitCost', l: 'Cost per entered unit (ex-GST)', t: 'money', min: 0, help: 'For purchases.', hide: !costs },
@@ -113,17 +127,18 @@ EDIT.move = (id, preset = {}) => {
     title: m ? (m.poId ? 'Purchase order receipt' : 'Stock movement') : 'Record stock movement', sub: m && m.poId ? 'Created by receiving a purchase order. Change it through the PO.' : 'Each product is counted in its own unit. Adjustments, damage, repairs, returns to vendor and physical counts.', readOnly: !can, delKey: 'moves/' + id,
     top: stockLine(p0), html: form(f, v0),
     validate: v => {
-      const e = []; if (N(v.qty) <= 0 && v.type !== 'count') e.push({ n: 'qty', m: 'Enter a quantity above zero.' }); if (v.type === 'count' && (v.qty === null || N(v.qty) < 0)) e.push({ n: 'qty', m: 'Enter the counted quantity.' });
+      const e = []; const lp = prodOf(v.productId); if (lp && isLinked(lp)) e.push({ n: 'productId', m: `${lp.name} takes its stock from ${mastersOf(lp).map(x => x.m.name).join(' and ')}. Record the movement there.` }); if (N(v.qty) <= 0 && v.type !== 'count') e.push({ n: 'qty', m: 'Enter a quantity above zero.' }); if (v.type === 'count' && (v.qty === null || N(v.qty) < 0)) e.push({ n: 'qty', m: 'Enter the counted quantity.' });
       const p = prodOf(v.productId); const fac = v.inUnit === 'purchase' ? N(p && p.purchaseFactor) || 1 : 1; const q = N(v.qty) * fac; const eff = mvOf(v.type);
       const badNow = (badMap()[v.productId] || 0) - (m && m.productId === v.productId ? N(m.badQty) : 0); if (eff[3] < 0 && q > badNow + 1e-9) e.push({ n: 'qty', m: `Only ${fmtQ(badNow, p)} is in damaged stock.` });
       return e;
     },
     onSave: async v => {
       const p = prodOf(v.productId); const eff = mvOf(v.type); const fac = v.inUnit === 'purchase' ? N(p.purchaseFactor) || 1 : 1; const q = rq3(N(v.qty) * fac);
-      const curExcl = (stockMap()[v.productId] || 0) - (m && m.productId === v.productId ? N(m.qty) : 0);
-      const dq = v.type === 'count' ? rq3(q - curExcl) : rq3(eff[2] * q); const db = rq3(eff[3] * q);
+      const curExcl = (stockMap()[v.productId] || 0) - (m && m.productId === v.productId && m.type !== 'count' ? N(m.qty) : 0);
+      const cnt = v.type === 'count'; const at = v.countAt === 'start' ? 'start' : 'end';
+      const dq = cnt ? rq3(q - countBase(v.productId, v.date, at, m && m.id)) : rq3(eff[2] * q); const db = rq3(eff[3] * q);
       const uc = v.unitCost !== null && v.unitCost !== undefined ? Math.round(N(v.unitCost) / fac * 10000) / 10000 : ((m && m.unitCost) ?? null);
-      await saveDoc('moves', id, { ...base(m), productId: v.productId, brandId: p && p.brandId, type: v.type, qty: dq, badQty: db || null, entered: N(v.qty), enteredUnit: v.inUnit === 'purchase' ? 'purchase' : 'stock', date: v.date, unitCost: uc, supplier: v.supplier, ref: v.ref, note: v.note }, ['inventory', `${eff[1]}: ${dq ? (dq > 0 ? '+' : '') + fmtQ(dq, p) : ''}${db ? ` (damaged ${db > 0 ? '+' : ''}${fmtQ(db, p)})` : ''} × ${p ? p.sku : ''}`]);
+      await saveDoc('moves', id, { ...base(m), productId: v.productId, brandId: p && p.brandId, type: v.type, qty: dq, badQty: db || null, setTo: cnt ? q : null, countAt: cnt ? at : null, entered: N(v.qty), enteredUnit: v.inUnit === 'purchase' ? 'purchase' : 'stock', date: v.date, unitCost: uc, supplier: v.supplier, ref: v.ref, note: v.note }, ['inventory', `${eff[1]}: ${dq ? (dq > 0 ? '+' : '') + fmtQ(dq, p) : ''}${db ? ` (damaged ${db > 0 ? '+' : ''}${fmtQ(db, p)})` : ''} × ${p ? p.sku : ''}`]);
       if (v.type === 'purchase' && v.updateCost && N(uc) > 0 && p && !m) { const cur = Math.max(0, curExcl); const nc = cur + dq > 0 ? (cur * N(p.costPrice) + dq * N(uc)) / (cur + dq) : N(uc); await saveDoc('products', p.id, { ...base(p), costPrice: Math.round(nc * 100) / 100 }, ['catalogue', `Cost price of ${p.sku} recalculated`]); }
     },
     onDelete: m && !m.poId ? delFn('moves', id, 'inventory', `Stock movement ${mvOf(m.type)[1]} ${N(m.qty) > 0 ? '+' : ''}${qty(m.qty || m.badQty)} × ${(prodOf(m.productId) || {}).sku || 'product'}`) : null,
@@ -144,7 +159,7 @@ Object.assign(ACT, {
   bulkmovesel() { bulkMove(selIds('stock')); },
   posel() { const ids = selIds('stock'); const ps = ids.map(prodOf).filter(Boolean); if (!ps.length) return; const sup = ps.map(p => p.supplierId).find(Boolean) || ''; EDIT.po(null, { supplierId: sup, lines: ps.map(p => poLineFor(p)) }); },
   bulkdelmoves() { const ids = selIds('moves').filter(k => k.startsWith('move|')).map(k => k.slice(5)); const sales = selIds('moves').length - ids.length; if (sales) toast(`${sales} sales-ledger rows skipped. Change those in Finance › Sales.`); bulkDelete('moves', ids, 'inventory', m => `${mvLabel(m)} ${qty(m.qty || m.badQty)} × ${(prodOf(m.productId) || {}).sku || ''} on ${fmtD(m.date)}`, m => m.poId ? 'Part of a purchase order receipt. Change it through the PO.' : '', 'moves'); },
-  exportstock2() { exportCSV('Stock levels', [{ l: 'SKU', k: 'sku' }, { l: 'Product', k: 'name' }, { l: 'Unit', csv: p => unitOf(p) }, { l: 'Location', k: 'location' }, { l: 'On hand', csv: p => rq3(stockState(p).on) }, { l: 'Damaged', csv: p => rq3(badMap()[p.id] || 0) }, { l: 'On order', csv: p => rq3(stockState(p).ord) }, { l: 'Reorder level', csv: p => stockState(p).rl }, { l: '30-day sales', csv: p => rq3(stockState(p).v) }, ...(allow('costs') ? [{ l: 'Value at cost', csv: p => (Math.max(0, stockState(p).on) * N(p.costPrice)).toFixed(2) }] : []), { l: 'Status', csv: p => STOCK_PILL[stockState(p).st][0] }], S.products.filter(p => inBrand(p) && p.status !== 'archived'), 'inventory'); },
+  exportstock2() { exportCSV('Stock levels', [{ l: 'SKU', k: 'sku' }, { l: 'Product', k: 'name' }, { l: 'Unit', csv: p => unitOf(p) }, { l: 'Location', k: 'location' }, { l: 'On hand', csv: p => rq3(stockState(p).on) }, { l: 'Damaged', csv: p => rq3(badMap()[p.id] || 0) }, { l: 'On order', csv: p => rq3(stockState(p).ord) }, { l: 'Reorder level', csv: p => stockState(p).rl }, { l: '30-day sales', csv: p => rq3(stockState(p).v) }, ...(allow('costs') ? [{ l: 'Value at cost', csv: p => isLinked(p) ? '0.00' : (Math.max(0, stockMap()[p.id] || 0) * N(p.costPrice)).toFixed(2) }] : []), { l: 'Status', csv: p => STOCK_PILL[stockState(p).st][0] }, { l: 'Stock comes from', csv: p => isLinked(p) ? mastersOf(p).map(x => `${x.m.sku} (${rq3(x.per)} ${unitOf(x.m)} each)`).join('; ') : (isMaterial(p) ? 'Master stock' : 'Own stock') }], S.products.filter(p => inBrand(p) && p.status !== 'archived'), 'inventory'); },
 });
 
 /* ---------- bulk movement: many products, one go ---------- */
@@ -153,19 +168,19 @@ function bulkMove(ids) {
   if (!S.products.length) { toast('Add products in the Catalogue first.', 'bad'); return; }
   BM = ids.length ? ids.map(pid => ({ productId: pid, qty: '', cost: '' })) : Array.from({ length: 5 }, () => ({ productId: '', qty: '', cost: '' }));
   const costs = allow('costs');
-  const rowsHTML = () => `<div class="tw grid-w"><table class="t grid"><thead><tr><th>#</th><th>Product</th><th class="num">On hand</th><th>Quantity</th><th>Unit</th>${costs ? '<th>Cost / unit</th>' : ''}<th></th></tr></thead><tbody>${BM.map((r, i) => { const p = prodOf(r.productId); return `<tr><td class="muted tnum">${i + 1}</td><td style="min-width:240px"><select class="inp" name="b.${i}.productId" data-t="str" data-ch="bmprod" aria-label="Row ${i + 1} product"><option value="">Choose…</option>${prodOpts().map(([k, t]) => `<option value="${esc(k)}"${k === r.productId ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></td><td class="num tnum">${p ? fmtQ(stockMap()[p.id] || 0, p) : '—'}</td><td style="width:120px"><input class="inp tnum" type="number" step="any" min="0" name="b.${i}.qty" data-t="num" value="${esc(r.qty ?? '')}" aria-label="Row ${i + 1} quantity"></td><td class="muted">${p ? esc(unitOf(p)) : ''}</td>${costs ? `<td style="width:120px"><input class="inp tnum" type="number" step="any" min="0" name="b.${i}.cost" data-t="num" value="${esc(r.cost ?? '')}" placeholder="${p && N(p.costPrice) ? esc(p.costPrice) : ''}" aria-label="Row ${i + 1} cost"></td>` : ''}<td><button type="button" class="btn icon ghost sm" data-act="bmrm:${i}" aria-label="Remove row">${icon('x')}</button></td></tr>`; }).join('')}</tbody></table></div>`;
+  const rowsHTML = () => `<div class="tw grid-w"><table class="t grid"><thead><tr><th>#</th><th>Product</th><th class="num">On hand</th><th>Quantity</th><th>Unit</th>${costs ? '<th>Cost / unit</th>' : ''}<th></th></tr></thead><tbody>${BM.map((r, i) => { const p = prodOf(r.productId); return `<tr><td class="muted tnum">${i + 1}</td><td style="min-width:240px"><select class="inp" name="b.${i}.productId" data-t="str" data-ch="bmprod" aria-label="Row ${i + 1} product"><option value="">Choose…</option>${stockOptsWith(r.productId).map(([k, t]) => `<option value="${esc(k)}"${k === r.productId ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></td><td class="num tnum">${p ? fmtQ(stockMap()[p.id] || 0, p) : '—'}</td><td style="width:120px"><input class="inp tnum" type="number" step="any" min="0" name="b.${i}.qty" data-t="num" value="${esc(r.qty ?? '')}" aria-label="Row ${i + 1} quantity"></td><td class="muted">${p ? esc(unitOf(p)) : ''}</td>${costs ? `<td style="width:120px"><input class="inp tnum" type="number" step="any" min="0" name="b.${i}.cost" data-t="num" value="${esc(r.cost ?? '')}" placeholder="${p && N(p.costPrice) ? esc(p.costPrice) : ''}" aria-label="Row ${i + 1} cost"></td>` : ''}<td><button type="button" class="btn icon ghost sm" data-act="bmrm:${i}" aria-label="Remove row">${icon('x')}</button></td></tr>`; }).join('')}</tbody></table></div>`;
   openDrawer({
     title: 'Bulk stock movement', sub: 'Add, remove, damage or count many products at once. Quantities are in each product’s own unit.', wide: true, saveLabel: 'Record movements', savedMsg: null, noFocus: true,
-    html: () => form([{ n: 'type', l: 'Movement', t: 'select', req: 1, o: MV_PICK.map(x => [x[0], x[1]]) }, { n: 'date', l: 'Date', t: 'date', req: 1 }, { n: 'ref', l: 'Reference', mono: 1, ph: 'Invoice, GRN or count sheet' }, { n: 'supplier', l: 'Vendor' }, { n: 'note', l: 'Note', full: 1 }, { n: 'updateCost', l: '', t: 'check', cl: 'For purchases, recalculate cost prices as a weighted average', full: 1, hide: !costs }], { type: 'adjust_add', date: TODAY(), updateCost: true })
+    html: () => form([{ n: 'type', l: 'Movement', t: 'select', req: 1, o: MV_PICK.map(x => [x[0], x[1]]) }, { n: 'date', l: 'Date', t: 'date', req: 1 }, { n: 'countAt', l: 'Counted at', t: 'select', o: COUNT_AT, when: 'type:count' }, { n: 'ref', l: 'Reference', mono: 1, ph: 'Invoice, GRN or count sheet' }, { n: 'supplier', l: 'Vendor' }, { n: 'note', l: 'Note', full: 1 }, { n: 'updateCost', l: '', t: 'check', cl: 'For purchases, recalculate cost prices as a weighted average', full: 1, hide: !costs }], { type: 'adjust_add', date: TODAY(), updateCost: true, countAt: 'end' })
       + `<details class="paste"><summary>${icon('copy')} Paste SKUs and quantities</summary><p class="help">Two or three columns from a spreadsheet: SKU (master or channel SKU), quantity${costs ? ', cost per unit' : ''}.</p><textarea class="inp mono" id="bmPaste" rows="4" placeholder="TVL-0001\t25.5\t92"></textarea><div style="margin-top:8px">${btn('Fill rows', 'bmpaste', { sm: true })}</div></details>
       <div id="bmBox">${rowsHTML()}</div><div style="margin-top:10px">${btn('Add 5 rows', 'bmadd', { sm: true, i: 'plus' })}</div>`,
     onSave: async v => {
       syncBM(); const rows = BM.filter(r => r.productId && (N(r.qty) > 0 || (v.type === 'count' && r.qty !== '' && r.qty !== null))); if (!rows.length) { toast('Enter a quantity for at least one product.', 'bad'); return false; }
-      const eff = mvOf(v.type); const ops = []; const sm = stockMap(); const bm = badMap(); const errs = [];
+      const eff = mvOf(v.type); const ops = []; const sm = stockMap(); const bm = badMap(); const errs = []; const cnt = v.type === 'count'; const at = v.countAt === 'start' ? 'start' : 'end'; const cb = cnt ? countBaseAll(v.date, at) : null;
       for (const r of rows) {
-        const p = prodOf(r.productId); const q = rq3(N(r.qty)); if (eff[3] < 0 && q > (bm[p.id] || 0) + 1e-9) { errs.push(`${p.sku}: only ${fmtQ(bm[p.id] || 0, p)} damaged`); continue; }
-        const dq = v.type === 'count' ? rq3(q - (sm[p.id] || 0)) : rq3(eff[2] * q); const db = rq3(eff[3] * q); const uc = r.cost !== '' && r.cost !== null && r.cost !== undefined ? N(r.cost) : (v.type === 'purchase' ? N(p.costPrice) || null : null);
-        ops.push({ op: 'set', path: 'moves/' + newId('moves'), data: clean({ productId: p.id, brandId: p.brandId, type: v.type, qty: dq, badQty: db || null, entered: q, enteredUnit: 'stock', date: v.date, unitCost: uc, supplier: v.supplier, ref: v.ref, note: v.note, ...stampOf(null) }) });
+        const p = prodOf(r.productId); const q = rq3(N(r.qty)); if (isLinked(p)) { errs.push(`${p.sku} takes its stock from a master; record it there`); continue; } if (eff[3] < 0 && q > (bm[p.id] || 0) + 1e-9) { errs.push(`${p.sku}: only ${fmtQ(bm[p.id] || 0, p)} damaged`); continue; }
+        const dq = cnt ? rq3(q - (cb[p.id] || 0)) : rq3(eff[2] * q); const db = rq3(eff[3] * q); const uc = r.cost !== '' && r.cost !== null && r.cost !== undefined ? N(r.cost) : (v.type === 'purchase' ? N(p.costPrice) || null : null);
+        ops.push({ op: 'set', path: 'moves/' + newId('moves'), data: clean({ productId: p.id, brandId: p.brandId, type: v.type, qty: dq, badQty: db || null, setTo: cnt ? q : null, countAt: cnt ? at : null, entered: q, enteredUnit: 'stock', date: v.date, unitCost: uc, supplier: v.supplier, ref: v.ref, note: v.note, ...stampOf(null) }) });
         if (v.type === 'purchase' && v.updateCost && N(uc) > 0 && dq > 0) { const cur = Math.max(0, sm[p.id] || 0); const nc = (cur * N(p.costPrice) + dq * N(uc)) / (cur + dq); ops.push({ op: 'set', path: 'products/' + p.id, data: clean({ ...base(p), costPrice: Math.round(nc * 100) / 100, ...stampOf(p) }) }); }
       }
       if (errs.length) { toast(errs.slice(0, 2).join('; '), 'bad'); return false; }

@@ -104,20 +104,21 @@ function ceoValues() {
   }
   if (canView('finance') && secOK('recurring')) { const rec = S.recurring.filter(x => x.active !== false && !x.autoPost); if (rec.length) { const od = rec.filter(x => overdueDates(x).length); v.recurOver = od.length; note.recurOver = od.length ? od.slice(0, 2).map(x => x.name).join(', ') : 'None overdue'; } }
   // inventory
-  const ps = S.products.filter(p => inBrand(p) && p.status !== 'archived'); const act = ps.filter(p => p.status !== 'draft');
+  const ps = S.products.filter(p => inBrand(p) && p.status !== 'archived'); const act = ps.filter(p => p.status !== 'draft'); const sellable = act.filter(p => !isMaterial(p));
   if (act.length) {
     const st = act.map(p => ({ p, ...stockState(p) })); const val = p => costs ? N(p.costPrice) : 1;
     v.inStock = st.filter(x => x.on > 0).length / st.length; note.inStock = `${num(st.filter(x => x.on > 0).length)} of ${num(st.length)} products`;
     const low = st.filter(x => x.st === 'out' || x.st === 'low').length; v.lowShare = low / st.length; note.lowShare = `${num(low)} product${low === 1 ? '' : 's'}`;
-    const stockV = sum(st, x => Math.max(0, x.on) * val(x.p)); const overV = sum(st.filter(x => x.st === 'over'), x => x.on * val(x.p));
+    const ownOn = x => x.linked ? 0 : Math.max(0, x.on); // a linked product's stock is its master's, counted once there
+    const stockV = sum(st, x => ownOn(x) * val(x.p)); const overV = sum(st.filter(x => x.st === 'over'), x => ownOn(x) * val(x.p));
     if (stockV > 0) { v.overShare = overV / stockV; note.overShare = costs ? `${inrS(overV)} of ${inrS(stockV)} at cost` : `${num(overV)} of ${num(stockV)} units`; }
     const bad = badMap(); const badV = sum(act, p => N(bad[p.id]) * val(p)); if (stockV + badV > 0) { v.badShare = badV / (stockV + badV); note.badShare = costs ? `${inrS(badV)} damaged` : `${num(badV)} units damaged`; }
     // listings & catalogue
-    const plats = activePlatforms(); if (plats.length) { const live = act.filter(p => liveCount(p) > 0).length; v.liveShare = live / act.length; note.liveShare = `${num(live)} of ${num(act.length)} products`; }
-    const lists = act.flatMap(p => Object.values(p.listings || {}).filter(l => l && l.status && l.status !== 'none')); if (lists.length) { const sup = lists.filter(l => l.status === 'suppressed').length; v.suppressed = sup; note.suppressed = `${num(sup)} of ${num(lists.length)} listings`; }
-    v.content = sum(act, p => contentScore(p).score) / act.length; note.content = `${num(act.filter(p => contentScore(p).score >= 80).length)} products at 80+`;
+    const plats = activePlatforms(); if (plats.length) { const live = sellable.filter(p => liveCount(p) > 0).length; v.liveShare = live / sellable.length; note.liveShare = `${num(live)} of ${num(sellable.length)} products`; }
+    const lists = sellable.flatMap(p => Object.values(p.listings || {}).filter(l => l && l.status && l.status !== 'none')); if (lists.length) { const sup = lists.filter(l => l.status === 'suppressed').length; v.suppressed = sup; note.suppressed = `${num(sup)} of ${num(lists.length)} listings`; }
+    if (sellable.length) v.content = sum(sellable, p => contentScore(p).score) / sellable.length; note.content = `${num(sellable.filter(p => contentScore(p).score >= 80).length)} products at 80+`;
     // ratings
-    let rs = 0, rn = 0, rl = 0; for (const p of act) for (const pl of plats) { const c = curRating(p, pl.key).cur; if (c && N(c.avg) > 0) { const w = Math.max(1, N(c.count)); rs += N(c.avg) * w; rn += w; rl++; } }
+    let rs = 0, rn = 0, rl = 0; for (const p of sellable) for (const pl of plats) { const c = curRating(p, pl.key).cur; if (c && N(c.avg) > 0) { const w = Math.max(1, N(c.count)); rs += N(c.avg) * w; rn += w; rl++; } }
     if (rn) { v.rating = rs / rn; note.rating = `${num(rl)} listing${rl === 1 ? '' : 's'}, ${num(rn)} ratings`; }
   } else { why.stock = 'No active products yet.'; why.ops = 'No active products yet.'; }
   if (canView('inventory')) { const open = S.pos.filter(p => (p.status === 'ordered' || p.status === 'partial') && (brandAll() || (p.lines || []).some(l => inBrand({ productId: l.productId, brandId: (l.newItem || {}).brandId })))); if (open.length) { const late = open.filter(p => p.expectedDate && p.expectedDate < T).length; v.poLate = late / open.length; note.poLate = `${num(late)} of ${num(open.length)} open`; } }

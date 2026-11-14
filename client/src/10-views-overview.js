@@ -61,7 +61,10 @@ function dashOverview() {
 function alertsList() {
   const items = []; const ps = S.products.filter(p => inBrand(p) && p.status !== 'archived');
   const pend = S.deletions.filter(x => x.status === 'pending'); if (pend.length && allow('approveDelete')) items.push(['acc', `${pend.length} delete request${pend.length > 1 ? 's' : ''} to approve`, pend.slice(0, 2).map(x => x.label).join(', '), 'go:approvals', 'approvals']);
-  const ss = ps.map(p => stockState(p)); const out = ss.filter(s => s.st === 'out').length, low = ss.filter(s => s.st === 'low').length;
+  const ss = ps.filter(p => !isLinked(p) && !isMaterial(p)).map(p => stockState(p)); const out = ss.filter(s => s.st === 'out').length, low = ss.filter(s => s.st === 'low').length;
+  // master materials: one alert covers every product that uses them
+  const mats = S.products.filter(p => isMaterial(p) && p.status !== 'archived' && (inBrand(p) || usersOf(p.id).some(inBrand))).map(p => ({ p, ...stockState(p), n: usersOf(p.id).length })).filter(x => x.st === 'out' || x.st === 'low').sort((a, b) => (a.st === 'out' ? 0 : 1) - (b.st === 'out' ? 0 : 1));
+  if (mats.length) items.push([mats.some(x => x.st === 'out') ? 'bad' : 'warn', `${mats.length} master material${mats.length > 1 ? 's' : ''} ${mats.every(x => x.st === 'out') ? 'out of stock' : 'low or out'}`, mats.slice(0, 2).map(x => `${x.p.name}: ${fmtQ(x.on, x.p)} left${x.n ? `, used by ${x.n} product${x.n > 1 ? 's' : ''}` : ''}`).join(' · '), 'invtab:masters', 'inventory']);
   if (out) items.push(['bad', `${out} product${out > 1 ? 's' : ''} out of stock`, 'Listings may go inactive on marketplaces.', 'stockfilter:out', 'inventory']);
   if (low) items.push(['warn', `${low} product${low > 1 ? 's' : ''} below reorder level`, 'Raise purchase orders before they run out.', 'stockfilter:low', 'inventory']);
   if (secOK('recurring')) { const od = S.recurring.filter(x => inBrand(x) && x.active !== false && !x.autoPost && overdueDates(x).length); if (od.length) items.push(['bad', `${od.length} recurring bill${od.length > 1 ? 's' : ''} overdue`, od.slice(0, 2).map(x => x.name).join(', '), 'fintab:recurring', 'finance']); }

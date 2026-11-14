@@ -8,12 +8,14 @@ const SO_OPEN = ['quote', 'confirmed', 'production', 'ready'];
 const DIM_M = { mm: 0.001, cm: 0.01, in: 0.0254, ft: 0.3048, m: 1 };
 const AREA_U = { 'sq ft': 0.09290304, 'sq m': 1 }; const LEN_U = { m: 1, ft: 0.3048 };
 const soLabel = k => (SO_STATUS.find(x => x[0] === k) || [k, k])[1];
-const lineModes = p => { const u = unitOf(p); return [...(AREA_U[u] ? [['area', 'L × W size']] : []), ...(LEN_U[u] ? [['length', 'Cut length']] : []), ['qty', 'Quantity']]; };
+const sizedLink = p => isLinked(p) && mastersOf(p).some(x => x.sized && STOCK.famOf(unitOf(x.m)) === 'area');
+const lineModes = p => { const u = unitOf(p); return [...(AREA_U[u] || sizedLink(p) ? [['area', 'L × W size']] : []), ...(LEN_U[u] ? [['length', 'Cut length']] : []), ['qty', 'Quantity']]; };
 // one order line → billed quantity, stock used (with wastage) and amount, all in the product's unit
 function soCalc(l) {
   const p = prodOf(l.productId); const u = unitOf(p); const pcs = Math.max(0, N(l.pieces) || (l.mode === 'qty' ? 0 : 1)); const k = DIM_M[l.dimUnit || 'in'] || DIM_M.in;
   let per = 0, bill = 0;
   if (l.mode === 'area' && AREA_U[u]) { per = (N(l.l) * k) * (N(l.w) * k) / AREA_U[u]; bill = per * pcs; }
+  else if (l.mode === 'area' && sizedLink(p)) { per = 1; bill = pcs; } // pieces cut to size from a master: billed per piece
   else if (l.mode === 'length' && LEN_U[u]) { per = N(l.l) * k / LEN_U[u]; bill = per * pcs; }
   else { bill = N(l.pieces); per = 1; }
   bill = rq3(bill); const use = rq3(bill * (1 + N(l.wastage) / 100));
@@ -25,7 +27,8 @@ const soTotal = o => Math.round((soSub(o) - N(o.discount) + N(o.shipping)) * 100
 const soPaid = o => sum(S.txns.filter(t => t.link && t.link.col === 'orders' && t.link.id === o.id), t => t.type === 'out' ? -N(t.amount) : N(t.amount));
 const soBal = o => o.status === 'cancelled' ? 0 : soTotal(o) - soPaid(o);
 const soCust = o => (o.customerId && (custOf(o.customerId) || {}).name) || o.customerName || 'Walk-in customer';
-const dimTxt = l => { const c = soCalc(l); return l.mode === 'area' ? `${qty(l.l)} × ${qty(l.w)} ${l.dimUnit || 'in'} × ${num(c.pcs)} pc = ${fmtQ(c.bill, c.u)}` : l.mode === 'length' ? `${qty(l.l)} ${l.dimUnit || 'in'} × ${num(c.pcs)} pc = ${fmtQ(c.bill, c.u)}` : fmtQ(c.bill, c.u); };
+const sizedArea = l => { const p = prodOf(l.productId); const m = p && mastersOf(p).find(x => x.sized); if (!m || AREA_U[unitOf(p)]) return ''; const a = STOCK.areaOf(l.l, l.w, l.dimUnit || 'in', unitOf(m.m)) * Math.max(1, N(l.pieces)); return ` (${qty(a)} ${unitOf(m.m)})`; };
+const dimTxt = l => { const c = soCalc(l); return l.mode === 'area' && sizedLink(prodOf(l.productId)) && !AREA_U[c.u] ? `${qty(l.l)} × ${qty(l.w)} ${l.dimUnit || 'in'} × ${num(c.pcs)} pc${sizedArea(l)}` : l.mode === 'area' ? `${qty(l.l)} × ${qty(l.w)} ${l.dimUnit || 'in'} × ${num(c.pcs)} pc = ${fmtQ(c.bill, c.u)}` : l.mode === 'length' ? `${qty(l.l)} ${l.dimUnit || 'in'} × ${num(c.pcs)} pc = ${fmtQ(c.bill, c.u)}` : fmtQ(c.bill, c.u); };
 
 V.orders = () => {
   const can = canEdit('orders'); const all = S.orders.filter(o => brandAll() || (o.lines || []).some(l => inBrand({ productId: l.productId })));
@@ -61,7 +64,7 @@ EDIT.order = (id, preset = {}) => {
   const dis = can ? '' : ' disabled';
   const lineRow = (l, i) => {
     const p = prodOf(l.productId); const modes = p ? lineModes(p) : [['qty', 'Quantity']]; const c = soCalc(l); const dims = l.mode === 'area' || l.mode === 'length';
-    return `<tr class="sol"><td style="min-width:210px"><select class="inp" name="sl.${i}.productId" data-t="str" data-ch="soprod" aria-label="Line ${i + 1} product"${dis}><option value="">Choose…</option>${prodOptsWith(l.productId).map(([k, t]) => `<option value="${esc(k)}"${k === l.productId ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>${p ? `<small class="muted">On hand ${fmtQ(stockMap()[p.id] || 0, p)} · ${inr(p.sellingPrice, 2)}/${esc(unitOf(p))}</small>` : ''}<input class="inp" name="sl.${i}.desc" data-t="str" value="${esc(l.desc || '')}" placeholder="Note on this line, e.g. dark tan, no brand mark" aria-label="Line ${i + 1} note" style="margin-top:4px"${dis}></td>
+    return `<tr class="sol"><td style="min-width:210px"><select class="inp" name="sl.${i}.productId" data-t="str" data-ch="soprod" aria-label="Line ${i + 1} product"${dis}><option value="">Choose…</option>${prodOptsWith(l.productId).map(([k, t]) => `<option value="${esc(k)}"${k === l.productId ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>${p ? `<small class="muted">${isLinked(p) && mastersOf(p).length ? `From ${esc(mastersOf(p)[0].m.name)}: ${fmtQ(stockMap()[mastersOf(p)[0].id] || 0, mastersOf(p)[0].m)} left` : `On hand ${fmtQ(stockMap()[p.id] || 0, p)}`} · ${inr(p.sellingPrice, 2)}/${esc(unitOf(p))}</small>` : ''}<input class="inp" name="sl.${i}.desc" data-t="str" value="${esc(l.desc || '')}" placeholder="Note on this line, e.g. dark tan, no brand mark" aria-label="Line ${i + 1} note" style="margin-top:4px"${dis}></td>
     <td style="min-width:128px"><select class="inp" name="sl.${i}.mode" data-t="str" data-ch="somode" aria-label="Line ${i + 1} type"${dis}>${modes.map(([k, t]) => `<option value="${k}"${k === l.mode ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></td>
     <td style="min-width:236px">${dims ? `<div class="dimrow"><input class="inp tnum" type="number" step="any" min="0" name="sl.${i}.l" data-t="num" data-in="soline" value="${esc(l.l ?? '')}" placeholder="L" aria-label="Length"${dis}>${l.mode === 'area' ? `<span>×</span><input class="inp tnum" type="number" step="any" min="0" name="sl.${i}.w" data-t="num" data-in="soline" value="${esc(l.w ?? '')}" placeholder="W" aria-label="Width"${dis}>` : ''}<select class="inp" name="sl.${i}.dimUnit" data-t="str" data-ch="soline" aria-label="Size unit"${dis}>${Object.keys(DIM_M).map(k => `<option${(l.dimUnit || 'in') === k ? ' selected' : ''}>${k}</option>`).join('')}</select></div>` : '<span class="muted">—</span>'}</td>
     <td style="width:84px"><input class="inp tnum" type="number" step="${l.mode === 'qty' ? 'any' : '1'}" min="0" name="sl.${i}.pieces" data-t="num" data-in="soline" value="${esc(l.pieces ?? '')}" aria-label="${l.mode === 'qty' ? 'Quantity' : 'Pieces'}"${dis}><small class="muted">${l.mode === 'qty' ? esc(unitOf(p)) : 'pieces'}</small></td>
@@ -96,6 +99,7 @@ EDIT.order = (id, preset = {}) => {
       const oid = id || newId('orders'); const prev = o;
       const doc = clean({ ...base(prev), number: v.number, date: v.date, customerId, customerName: customerId ? (v.customerName || (custOf(customerId) || {}).name || '') : (v.customerName || ''), phone: v.phone, channel: v.channel || 'direct', status: v.status, dueDate: v.dueDate, discount: N(v.discount), shipping: N(v.shipping), lines, deliveryAddress: v.deliveryAddress, tracking: v.tracking, notes: v.notes, internal: v.internal, ...stampOf(prev) });
       doc.total = soTotal(doc); if (['dispatched', 'delivered'].includes(v.status) && !(prev && prev.dispatchedOn)) doc.dispatchedOn = TODAY();
+      doc.stageDates = soStages(prev, v.status, v.date);
       ops.push({ op: 'set', path: 'orders/' + oid, data: doc }); ops.push(...soSalesOps({ ...doc, id: oid }));
       await batchAll(ops); addLog(prev ? 'update' : 'create', 'orders', `Sales order ${v.number} · ${soLabel(v.status)} · ${inr(doc.total)}`, prev ? diffText(base(prev), doc) : `${lines.length} lines for ${customerId ? (custOf(customerId) || {}).name || v.customerName : v.customerName || 'walk-in'}`);
     },
@@ -109,12 +113,19 @@ function soSalesOps(o) {
     const p = prodOf(l.productId); if (!p) return; const c = soCalc(l); if (c.bill <= 0) return; const sid = 'so-' + o.id + '-' + (l.lid ?? i); keep.add(sid); const prev = byId('sales')[sid];
     if (prev && prev.status === 'returned') return; // a return recorded against this line is left exactly as it is
     const parts = S.sales.filter(x => x.splitFrom === sid); const q = rq3(c.bill - sum(parts, x => x.qty)); if (q <= 0) return; // part returns were split off this entry
-    const unitPrice = Math.round(c.amount * f / c.bill * 10000) / 10000; const s = { date: o.dispatchedOn || o.date, platform: o.channel || 'direct', productId: p.id, brandId: p.brandId, qty: q, wasteQty: c.waste || null, unitPrice, status: o.status === 'delivered' ? 'delivered' : 'transit', orderRef: o.number, orderId: o.id, customerId: o.customerId || null, note: l.mode === 'area' || l.mode === 'length' ? 'Custom size: ' + dimTxt(l) : (l.desc || '') };
+    const unitPrice = Math.round(c.amount * f / c.bill * 10000) / 10000; const s = { date: o.dispatchedOn || o.date, platform: o.channel || 'direct', productId: p.id, brandId: p.brandId, qty: q, wasteQty: c.waste || null, unitPrice, status: o.status === 'delivered' ? 'delivered' : 'transit', orderRef: o.number, orderId: o.id, customerId: o.customerId || null, note: l.mode === 'area' || l.mode === 'length' ? 'Custom size: ' + dimTxt(l) : (l.desc || ''), ...(l.mode === 'area' && !AREA_U[unitOf(p)] && sizedLink(p) ? { l: N(l.l), w: N(l.w), dimUnit: l.dimUnit || 'in' } : { l: null, w: null, dimUnit: null }) };
     const calc = saleSnapshot(s, p, PL(s.platform)); const doc = clean({ ...(prev ? base(prev) : {}), ...s, calc, ...stampOf(prev) });
     if (!prev || diffText(base(prev), doc)) ops.push({ op: 'set', path: 'sales/' + sid, data: doc });
   });
   for (const s of existing) if (!keep.has(s.id) && s.status !== 'cancelled' && s.status !== 'returned') ops.push({ op: 'set', path: 'sales/' + s.id, data: clean({ ...base(s), status: 'cancelled', note: (s.note ? s.note + ' · ' : '') + `Order ${o.number} ${o.status === 'cancelled' ? 'cancelled' : 'changed'}`, ...stampOf(s) }) });
   return ops;
+}
+// first day an order reached each status, plus the earlier ones it skipped
+function soStages(prev, st, date) {
+  const sd = { ...((prev && prev.stageDates) || {}) }; const i = STOCK.FLOW.indexOf(st); if (i < 0) return sd;
+  const was = prev ? STOCK.FLOW.indexOf(prev.status) : -1; // stages an older order had already passed date from its order date
+  for (let k = 1; k <= i; k++) { const s = STOCK.FLOW[k]; if (!sd[s]) sd[s] = !prev ? (date || TODAY()) : (k <= was ? prev.date || TODAY() : TODAY()); }
+  return sd;
 }
 function syncSO() { const f = $('#drForm'); if (!f || !DRW_so) return; const { vals } = readForm(f); const raw = vals.sl || {}; SOL = SOL.map((l, i) => ({ ...l, ...(raw[i] || {}) })); }
 function redrawSO() { const el = $('#soLines'); if (el && DRW_so) el.innerHTML = DRW_so.lines(); const t = $('#soTot'); if (t && DRW_so) t.innerHTML = DRW_so.totals(); }
@@ -134,7 +145,7 @@ Object.assign(ACT, {
   sopay(id) { closeDrawer(); setTimeout(() => soPayment(id, 'in'), 230); }, sorefund(id) { closeDrawer(); setTimeout(() => soPayment(id, 'out'), 230); },
   sobulk() {
     const st = ($('#soBulk') || {}).value; if (!st) { toast('Choose a status first.', 'bad'); return; } const os = selIds('so').map(id => S.orders.find(o => o.id === id)).filter(Boolean);
-    guarded(async () => { const ops = []; for (const o of os) { if (o.status === st) continue; const doc = clean({ ...base(o), status: st, ...(['dispatched', 'delivered'].includes(st) && !o.dispatchedOn ? { dispatchedOn: TODAY() } : {}), ...stampOf(o) }); ops.push({ op: 'set', path: 'orders/' + o.id, data: doc }, ...soSalesOps({ ...doc, id: o.id })); } if (!ops.length) return; await batchAll(ops); selOf('so').clear(); addLog('update', 'orders', `${os.length} orders set to ${soLabel(st)}`, os.map(o => o.number).join(', ')); toast(`${os.length} orders set to ${soLabel(st)}`); });
+    guarded(async () => { const ops = []; for (const o of os) { if (o.status === st) continue; const doc = clean({ ...base(o), status: st, ...(['dispatched', 'delivered'].includes(st) && !o.dispatchedOn ? { dispatchedOn: TODAY() } : {}), stageDates: soStages(o, st, o.date), ...stampOf(o) }); ops.push({ op: 'set', path: 'orders/' + o.id, data: doc }, ...soSalesOps({ ...doc, id: o.id })); } if (!ops.length) return; await batchAll(ops); selOf('so').clear(); addLog('update', 'orders', `${os.length} orders set to ${soLabel(st)}`, os.map(o => o.number).join(', ')); toast(`${os.length} orders set to ${soLabel(st)}`); });
   },
 });
 // keep totals live when discount or shipping change

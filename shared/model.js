@@ -48,7 +48,7 @@ const MODEL = (() => {
     expenses: ['finance', 'hr'], recurring: ['finance'], payouts: ['finance'], assets: ['finance'], accounts: ['finance', 'orders', 'inventory', 'hr'], txns: ['finance', 'orders', 'inventory', 'hr'], pinvoices: ['inventory', 'finance'],
     candidates: ['hr'], hrprofiles: ['hr'], payroll: ['hr'], hradj: ['hr'], claims: ['returns', 'finance'], orders: ['orders', 'finance', 'returns', 'dashboard'],
   };
-  const SETTINGS_W = { ceo: ['ceo'], platforms: ['finance', 'calculator'], attendance: ['attendance'], reports: ['daily'], hr: ['hr'], recon: ['finance'], purchase: ['inventory', 'finance'], listings: ['catalogue'], claims: ['returns'] };
+  const SETTINGS_W = { ceo: ['ceo'], stock: ['inventory'], platforms: ['finance', 'calculator'], attendance: ['attendance'], reports: ['daily'], hr: ['hr'], recon: ['finance'], purchase: ['inventory', 'finance'], listings: ['catalogue'], claims: ['returns'] };
   const COLLECTIONS = Object.keys(W);
   const mergeRole = (d, x) => ({ label: x.label || d.label, custom: !!x.custom, modules: { ...d.modules, ...(x.modules || {}) }, sections: { ...d.sections, ...(x.sections || {}) }, abilities: { ...d.abilities, ...(x.abilities || {}) } });
   function roleDefs(rolesSetting) {

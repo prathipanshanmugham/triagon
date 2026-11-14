@@ -23,6 +23,8 @@ const fmtQ = (n, p) => { const u = typeof p === 'string' ? (UNITS.some(x => x[0]
 const canDeleteCol = col => !perms() || (MODEL.writeMods(col) || []).some(m => m === '*' || canEdit(m));
 const isPU = f => N(f) > 0 && N(f) !== 1;
 // product choices for a line, keeping the line's own product even if it is archived or in another brand
+// pickers for stock movements and purchase orders leave out products that take their stock from a master
+const stockOptsWith = (...ids) => prodOptsWith(...ids).filter(([id]) => ids.includes(id) || !isLinked(prodOf(id)));
 const prodOptsWith = (...ids) => { const o = prodOpts(); for (const id of ids) { const p = id && prodOf(id); if (p && !o.some(x => x[0] === id)) o.unshift([id, (p.sku ? p.sku + ' · ' : '') + p.name + (p.status === 'archived' ? ' (archived)' : '')]); } return o; };
 const pct = (f, d = 1) => (Number.isFinite(f) ? (f * 100).toFixed(d) : '0.0') + '%';
 const ratio = (a, b) => (b ? a / b : 0);
@@ -84,10 +86,10 @@ const ABILITIES = MODEL.ABILITIES;
 const DEFAULT_ROLE_DEFS = MODEL.DEFAULT_ROLE_DEFS;
 const SWATCHES = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8'];
 const BRAND_CATS = ['Leather hides & sheets', 'Leather craft', 'Pottery & ceramics', 'Craft tools & kits', 'Art & craft supplies', 'Textile crafts', 'Handicrafts & décor', 'Packaging & printing', 'Other'];
-const PROD_CATS = ['Leather hide', 'Leather sheet / panel', 'Leather scraps', 'Leathercraft tool', 'Leathercraft kit', 'Thread & needles', 'Hardware & fittings', 'Dye & finish', 'Pottery clay', 'Glaze & colour', 'Pottery tool', 'Handmade pottery', 'Finished leather goods', 'Craft kit', 'Craft supply', 'Accessory', 'Other'];
+const PROD_CATS = ['Raw material', 'Leather hide', 'Leather sheet / panel', 'Leather scraps', 'Leathercraft tool', 'Leathercraft kit', 'Thread & needles', 'Hardware & fittings', 'Dye & finish', 'Pottery clay', 'Glaze & colour', 'Pottery tool', 'Handmade pottery', 'Finished leather goods', 'Craft kit', 'Craft supply', 'Accessory', 'Other'];
 const GST_RATES = [0, 3, 5, 12, 18, 28, 40];
 const LIST_STATUS = [['none', 'Not listed'], ['draft', 'Draft'], ['live', 'Live'], ['inactive', 'Inactive'], ['suppressed', 'Suppressed']];
-const SALE_STATUS = [['delivered', 'Delivered'], ['transit', 'In transit'], ['returned', 'Returned'], ['cancelled', 'Cancelled']];
+const SALE_STATUS = [['pending', 'Placed, not shipped'], ['delivered', 'Delivered'], ['transit', 'In transit'], ['returned', 'Returned'], ['cancelled', 'Cancelled']];
 const EXP_CATS = ['Advertising', 'Salaries & wages', 'Rent & utilities', 'Raw material & consumables', 'Logistics & courier', 'Packaging material', 'Software & subscriptions', 'Professional fees', 'Photography & content', 'Workshops & events', 'Insurance', 'Loan & EMI', 'Travel', 'Bank & payment charges', 'Office & misc', 'Other'];
 const CHANNELS = ['Amazon Sponsored Products', 'Amazon Sponsored Brands', 'Flipkart Ads', 'Meesho Ads', 'Etsy Ads', 'Meta Ads', 'Google Ads', 'Influencer', 'Email / WhatsApp', 'Workshop / event', 'Deal / coupon', 'Other'];
 const CAMP_STATUS = [['planned', 'Planned'], ['live', 'Live'], ['paused', 'Paused'], ['ended', 'Ended']];
@@ -268,6 +270,7 @@ function saleFin(s) {
   const c = s.calc || saleSnapshot(s);
   const r = { units: 0, gross: 0, returns: 0, cancelled: 0, taxable: 0, outGST: 0, cogs: 0, fees: 0, gstOnFees: 0, pack: 0, tcs: 0, tds: 0, settlement: 0, profit: 0, retUnits: 0, gstRate: N(c.gstRate) };
   if (s.status === 'cancelled') { r.cancelled = price * q; return r; }
+  if (s.status === 'pending') { r.pending = price * q; return r; } // not revenue until it ships
   r.gross = price * q; r.pack = N(c.pack) * q; const waste = N(c.cost) * N(s.wasteQty);
   if (s.status === 'returned') {
     r.returns = price * q; r.retUnits = q;
@@ -331,16 +334,30 @@ const isRestocked = s => s.retCondition ? s.retCondition === 'good' : s.restocke
 // wasteQty: extra stock used when cutting a custom size (leather offcuts); it is never restocked
 const saleStockOut = s => { const q = N(s.qty); if (s.status === 'cancelled') return 0; const w = N(s.wasteQty); if (s.status === 'returned') return (isRestocked(s) ? 0 : q) + w; return q + w; };
 const rq3 = n => Math.round(N(n) * 1000) / 1000;
-function stockMap() { return memo('stock', () => { const m = {}; for (const p of S.products) m[p.id] = N(p.openingStock); for (const mv of S.moves) if (mv.productId in m) m[mv.productId] += N(mv.qty); for (const s of S.sales) if (s.productId in m) m[s.productId] -= saleStockOut(s); for (const k in m) m[k] = rq3(m[k]); return m; }); }
+// stock comes from the shared engine (shared/stock.js): masters, deduction stages, counts and returns in one place
+function stockEngine(asOf) { return memo('stockeng:' + (asOf || ''), () => STOCK.compute({ products: S.products, moves: S.moves, sales: S.sales, orders: S.orders, settings: S.settings.stock, asOf, today: TODAY() })); }
+function stockMap() { return stockEngine().on; }
 // damaged / rejected stock, kept apart from sellable stock
-function badMap() { return memo('bad', () => { const m = {}; for (const mv of S.moves) if (N(mv.badQty)) m[mv.productId] = (m[mv.productId] || 0) + N(mv.badQty); for (const s of S.sales) if (s.status === 'returned' && s.retCondition === 'bad') m[s.productId] = (m[s.productId] || 0) + N(s.retQty || s.qty); for (const k in m) m[k] = rq3(m[k]); return m; }); }
+function badMap() { return stockEngine().bad; }
+const isLinked = p => STOCK.linked(p);
+const isMaterial = p => !!p && p.kind === 'material';
+const stockSet = () => STOCK.settings(S.settings.stock);
+// what can be sold now: the product's own stock, or for one that uses master stock, how many units the masters cover
+function availOf(p) { if (!p) return 0; if (isLinked(p)) { const n = STOCK.canMake(p, stockEngine()); if (n !== null) return n; } return stockMap()[p.id] || 0; }
+const mastersOf = p => (STOCK.partsOf(p, stockEngine().P) || []).map(x => ({ ...x, m: prodOf(x.id) })).filter(x => x.m);
+const usersOf = mid => S.products.filter(p => isLinked(p) && p.link.parts.some(x => x && x.id === mid));
 function sold30() { return memo('sold30', () => { const r = [addDays(TODAY(), -29), TODAY()]; const m = {}; for (const s of S.sales) if (inRange(s.date, r) && s.status !== 'cancelled' && s.status !== 'returned') m[s.productId] = (m[s.productId] || 0) + N(s.qty); return m; }); }
 const lineFactor = l => N(l.factor) || 1;
 function onOrder() { return memo('onorder', () => { const m = {}; for (const po of S.pos) if (po.status === 'ordered' || po.status === 'partial') for (const l of (po.lines || [])) if (l.productId) m[l.productId] = rq3((m[l.productId] || 0) + Math.max(0, N(l.qty) - N(l.received) - N(l.rejected)) * lineFactor(l)); return m; }); }
 function stockState(p) {
-  const on = stockMap()[p.id] || 0, rl = N(p.reorderLevel ?? 10), v = sold30()[p.id] || 0; const cover = on <= 0 ? 0 : v ? on / (v / 30) : Infinity;
+  if (isLinked(p) && mastersOf(p).length) {
+    const on = availOf(p), v = sold30()[p.id] || 0; const ms = mastersOf(p); const mst = ms.map(x => stockState(x.m).st);
+    const st = on <= 0 ? 'out' : (mst.includes('out') || mst.includes('low')) ? 'low' : 'ok';
+    return { on, rl: 0, v, cover: on <= 0 ? 0 : v ? on / (v / 30) : Infinity, st, ord: 0, com: 0, linked: true, masters: ms };
+  }
+  const E = stockEngine(); const on = E.on[p.id] || 0, rl = N(p.reorderLevel ?? 10), v = E.use30[p.id] || 0; const cover = on <= 0 ? 0 : v ? on / (v / 30) : Infinity;
   const st = on <= 0 ? 'out' : on <= rl ? 'low' : cover > 120 && on > rl * 3 ? 'over' : 'ok';
-  return { on, rl, v, cover, st, ord: onOrder()[p.id] || 0 };
+  return { on, rl, v, cover, st, ord: onOrder()[p.id] || 0, com: E.open[p.id] || 0 };
 }
 const STOCK_PILL = { out: ['Out of stock', 't-bad'], low: ['Low stock', 't-warn'], over: ['Overstock', 't-info'], ok: ['Healthy', 't-good'] };
 const poValue = po => sum(po.lines || [], l => N(l.qty) * N(l.cost));
@@ -660,7 +677,7 @@ function fld(f, v) {
   const id = 'fi_' + f.n.replace(/[^a-z0-9]/gi, '_'); const val = (v === undefined || v === null) ? (f.d ?? '') : v;
   const dis = (f.ro || (DRW.cfg && DRW.cfg.readOnly)) ? ' disabled' : ''; const req = f.req ? ' data-req="1"' : ''; const t = f.t || 'text';
   let input;
-  if (t === 'select') { const opts = (typeof f.o === 'function' ? f.o() : f.o) || []; input = `<select class="inp" id="${id}" name="${f.n}" data-t="${f.num ? 'num' : 'str'}"${req}${dis}${f.ch ? ` data-ch="${f.ch}"` : ''}>${f.blank !== undefined ? `<option value="">${esc(f.blank)}</option>` : ''}${opts.map(o => { const [ov, ol] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(ov)}"${String(ov) === String(val) ? ' selected' : ''}>${esc(ol)}</option>`; }).join('')}</select>`; }
+  if (t === 'select') { let opts = (typeof f.o === 'function' ? f.o() : f.o) || []; if (val !== '' && val !== null && val !== undefined && typeof val !== 'object' && !opts.some(o => String(Array.isArray(o) ? o[0] : o) === String(val))) opts = [[val, String(val)], ...opts]; input = `<select class="inp" id="${id}" name="${f.n}" data-t="${f.num ? 'num' : 'str'}"${req}${dis}${f.ch ? ` data-ch="${f.ch}"` : ''}>${f.blank !== undefined ? `<option value="">${esc(f.blank)}</option>` : ''}${opts.map(o => { const [ov, ol] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(ov)}"${String(ov) === String(val) ? ' selected' : ''}>${esc(ol)}</option>`; }).join('')}</select>`; }
   else if (t === 'textarea') input = `<textarea class="inp" id="${id}" name="${f.n}" data-t="str" rows="${f.rows || 4}" placeholder="${esc(f.ph || '')}"${req}${dis}>${esc(val)}</textarea>`;
   else if (t === 'check') input = `<label class="chk"><input type="checkbox" id="${id}" name="${f.n}" data-t="check"${val === true ? ' checked' : ''}${dis}> ${esc(f.cl || '')}</label>`;
   else if (t === 'multi') { const opts = (typeof f.o === 'function' ? f.o() : f.o) || []; const arr = Array.isArray(val) ? val : []; input = `<div class="checks" id="${id}">${opts.length ? opts.map(([ov, ol]) => `<label class="chk"><input type="checkbox" name="${f.n}" data-t="multi" value="${esc(ov)}"${arr.includes(ov) ? ' checked' : ''}${dis}> ${esc(ol)}</label>`).join('') : `<span class="muted">${esc(f.none || 'Nothing to choose yet')}</span>`}</div>`; }

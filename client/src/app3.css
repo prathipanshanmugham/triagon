@@ -132,3 +132,7 @@ table.t td b.mono{white-space:nowrap}
 .ceo-strip small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .ceo-strip-go{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font-weight:600;font-size:13px;white-space:nowrap}.ceo-strip-go svg{width:15px;height:15px}
 @media (max-width:560px){.ceo-strip-go{display:none}}
+
+/* ---------- master stock ---------- */
+.mat-name{min-width:220px}
+.mat-acts{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}

@@ -66,11 +66,15 @@ const feeDefault = (pl, k) => k === 'ship' ? N(pl.shipBase) : k === 'other' ? 0 
 EDIT.product = (id, preset = {}) => {
   const p = id ? prodOf(id) : null; const can = canEdit('catalogue'); const costs = allow('costs');
   if (!S.brands.length) { toast('Add a brand first.', 'bad'); return; }
-  const v0 = p ? { ...p, purchaseFactor: p.purchaseFactor ?? 1 } : { status: 'active', gstRate: 18, reorderLevel: 10, unit: 'pc', purchaseFactor: 1, brandId: (ui.brand !== 'all' ? ui.brand : (myBrands()[0] || {}).id), ...preset };
+  const v0 = p ? { ...p, kind: p.kind || 'product', purchaseFactor: p.purchaseFactor ?? 1 } : { kind: 'product', status: 'active', gstRate: 18, reorderLevel: 10, unit: 'pc', purchaseFactor: 1, brandId: (ui.brand !== 'all' ? ui.brand : (myBrands()[0] || {}).id), ...preset };
   const u = unitOf(v0); const on = p ? stockMap()[p.id] || 0 : 0; const bad = p ? badMap()[p.id] || 0 : 0;
   const fD = [
-    { n: 'name', l: 'Product name', req: 1, full: 1, ph: 'e.g. Full-grain veg-tan leather, 2.0 mm, tan' },
-    { n: 'brandId', l: 'Brand', t: 'select', req: 1, o: brandOpts },
+    { n: 'name', l: 'Product name', full: 1, ph: 'e.g. Full-grain veg-tan leather, 2.0 mm, tan', help: v0.kind === 'material' && !p ? 'Leave blank to name it from the type, colour, grade and specification.' : '' },
+    { n: 'kind', l: 'Type of item', t: 'select', o: [['product', 'Sellable product'], ['material', 'Master material (bulk stock other products use)']], help: 'A master material holds the stock; products linked to it deduct from it when they sell.' },
+    { n: 'brandId', l: 'Brand', t: 'select', req: 1, o: brandOpts, help: v0.kind === 'material' ? 'Products of any brand can use a master.' : '' },
+    { n: 'matType', l: 'Material type', t: 'select', o: MAT_TYPES.map(t => t[0]), when: 'kind:material', ch: p ? '' : 'mattype' },
+    { n: 'colour', l: 'Colour', ph: 'e.g. Natural, Black, Dark brown', when: 'kind:material' }, { n: 'grade', l: 'Grade', ph: 'e.g. A, Full grain, Premium', when: 'kind:material' },
+    { n: 'spec', l: 'Specification', ph: 'e.g. 2.0 mm, veg-tan · water-based · spirit dye', when: 'kind:material', full: 1 },
     { n: 'sku', l: 'Master SKU', mono: 1, ph: 'Leave blank to auto-number', help: p ? 'Each channel can use its own SKU (Channels tab).' : 'Auto format: BRANDCODE-0001' },
     { n: 'category', l: 'Category', t: 'select', o: PROD_CATS, blank: 'Choose…' }, { n: 'variant', l: 'Variant', ph: 'e.g. Tan / 2.0 mm' },
     { n: 'unit', l: 'Stock & selling unit', t: 'select', o: UNITS, ch: 'produnit', help: 'Stock, prices and sales are counted in this unit. Leather is usually sold per sq ft.' },
@@ -81,7 +85,7 @@ EDIT.product = (id, preset = {}) => {
     { n: 'images', l: 'Images ready', t: 'number', min: 0, help: 'Main image plus gallery shots that meet platform specs.' },
   ];
   const fP = [
-    { n: 'mrp', l: 'MRP', t: 'money', min: 0, suf: perU(u) }, { n: 'sellingPrice', l: 'Selling price (incl. GST)', t: 'money', req: 1, min: 0, suf: perU(u) },
+    { n: 'mrp', l: 'MRP', t: 'money', min: 0, suf: perU(u) }, { n: 'sellingPrice', l: 'Selling price (incl. GST)', t: 'money', min: 0, suf: perU(u), help: v0.kind === 'material' ? 'Only if you also sell the material itself.' : '' },
     { n: 'costPrice', l: 'Cost price (ex-GST)', t: 'money', min: 0, suf: perU(u), help: 'Landed cost per stock unit. Receiving purchase orders updates it as a weighted average.', hide: !costs },
     { n: 'packagingCost', l: 'Packaging per unit', t: 'money', min: 0, suf: perU(u) },
     { raw: `<div class="subh" style="margin:2px 0 0">How you buy it</div><p class="help" style="margin:0">Example: you buy leather by the hide or in 100 sq ft lots and sell it per sq ft. Set the purchase unit to “100 sq ft lot” and units per purchase unit to 100. Purchase orders and stock-in can then be entered in lots, and stock is still counted in sq ft.</p>` },
@@ -118,14 +122,18 @@ EDIT.product = (id, preset = {}) => {
   const feeHTML = `<p class="muted" style="margin:0 0 10px">Fees differ by SKU on each platform (category commission, weight slab, closing fee). Enter this SKU’s actual rates. Blank uses the platform default from Fee settings, shown as the placeholder.</p>
     <div class="tw"><table class="t ft"><thead><tr><th>Platform</th>${FEE_F.map(f => `<th class="num">${esc(f[1])} ${f[2]}</th>`).join('')}</tr></thead><tbody>${pls.map(pl => { const f = (lst[pl.key] || {}).fees || {}; return `<tr><td><b>${esc(pl.name)}</b></td>${FEE_F.map(([k, , s]) => `<td><input class="inp tnum" type="number" step="any" min="0" name="listings.${pl.key}.fees.${k}" data-t="num" data-in="pfee" value="${esc(f[k] ?? '')}" placeholder="${esc(feeDefault(pl, k))}" aria-label="${esc(pl.name)} ${k} ${s}"${can ? '' : ' disabled'}></td>`).join('')}</tr>`; }).join('')}</tbody></table></div>
     <div class="subh">What you keep per ${esc(u)}</div><div id="feeOut"></div><p class="help">Uses the channel price (or master price), this SKU’s fees, 18% GST on fees, TCS/TDS from Fee settings and your cost and packaging. Updates as you type.</p>`;
-  const tabs = [{ l: 'Details', html: form(fD, v0) }, { l: 'Pricing & units', html: form(fP, v0) }, { l: 'Content', html: form(fC, v0) }, { l: 'Channels', html: chHTML }, { l: 'Fees & profit', html: feeHTML }];
+  const tabs = [{ l: 'Details', html: form(fD, v0) }, { l: 'Pricing & units', html: form(fP, v0) }];
+  if (p && isMaterial(p)) tabs.push(...masterTabs(p)); else tabs.push({ l: 'Stock source', html: stockSourceHTML(p, can) });
+  tabs.push({ l: 'Content', html: form(fC, v0) }, { l: 'Channels', html: chHTML }, { l: 'Fees & profit', html: feeHTML });
   if (p) tabs.push({ l: 'Ratings', html: prodRatingsHTML(p, pls, can) });
   openDrawer({
-    title: p ? p.name : 'New product', sub: p ? `${esc(p.sku || '')} · ${esc(brandName(p.brandId))} · ${fmtQ(on, u)} on hand` : 'Add the essentials now; channels and content can follow.', readOnly: !can, delKey: 'products/' + id, wide: true,
-    tabs, onOpen: () => feeCalc(),
-    validate: v => { const e = []; const sku = String(v.sku || '').trim(); if (sku && S.products.some(x => x.id !== id && String(x.sku || '').toLowerCase() === sku.toLowerCase())) e.push({ n: 'sku', m: 'Another product already uses this SKU.' }); if (N(v.sellingPrice) <= 0) e.push({ n: 'sellingPrice', m: 'Enter a price above zero.' }); if (v.mrp && N(v.mrp) < N(v.sellingPrice)) e.push({ n: 'mrp', m: 'MRP can’t be below the selling price.' }); if (v.purchaseFactor !== null && N(v.purchaseFactor) <= 0) e.push({ n: 'purchaseFactor', m: 'Enter how many stock units one purchase unit holds.' }); e.push(...urlErr(v, ['driveLink', ...pls.flatMap(pl => [`listings.${pl.key}.url`, `listings.${pl.key}.driveLink`])])); for (const pl of pls) { const cs = String(getPath(v, `listings.${pl.key}.sku`) || '').trim().toLowerCase(); if (cs && S.products.some(x => x.id !== id && String(chanSku(x, pl.key)).toLowerCase() === cs)) e.push({ n: `listings.${pl.key}.sku`, m: `Another product uses this SKU on ${pl.name}.` }); } return e; },
+    title: p ? p.name : v0.kind === 'material' ? 'New master material' : 'New product', sub: p ? `${esc(p.sku || '')} · ${esc(isMaterial(p) ? matLine(p) || 'Master material' : brandName(p.brandId))} · ${isLinked(p) && mastersOf(p).length ? `${fmtQ(availOf(p), u)} available from ${esc(mastersOf(p)[0].m.name)}` : `${fmtQ(on, u)} on hand`}` : v0.kind === 'material' ? 'Bulk stock in sq ft, ml, L, g or kg that products are cut, filled or packed from.' : 'Add the essentials now; channels and content can follow.', readOnly: !can, delKey: 'products/' + id, wide: true,
+    tabs, onOpen: () => { feeCalc(); lnkPrev(); },
+    validate: v => { const e = []; const sku = String(v.sku || '').trim(); if (sku && S.products.some(x => x.id !== id && String(x.sku || '').toLowerCase() === sku.toLowerCase())) e.push({ n: 'sku', m: 'Another product already uses this SKU.' }); if (v.kind !== 'material' && N(v.sellingPrice) <= 0) e.push({ n: 'sellingPrice', m: 'Enter a price above zero.' }); if (v.kind !== 'material' && !String(v.name || '').trim()) e.push({ n: 'name', m: 'Enter the product name.' }); if (v.kind === 'material') { const dup = S.products.find(x => x.id !== id && isMaterial(x) && x.status !== 'archived' && [x.matType, x.colour, x.grade, x.spec, unitOf(x)].map(z => String(z || '').trim().toLowerCase()).join('|') === [v.matType, v.colour, v.grade, v.spec, v.unit || 'pc'].map(z => String(z || '').trim().toLowerCase()).join('|')); if (dup) e.push({ n: 'colour', m: `${dup.name} already has this type, colour, grade and specification. Use that master.` }); if (p && !isMaterial(p) && isLinked(p)) e.push({ n: 'kind', m: 'This product takes stock from a master. Set its stock source to its own stock before making it a master.' }); } if (p && isMaterial(p) && v.kind !== 'material' && usersOf(p.id).length) e.push({ n: 'kind', m: `${usersOf(p.id).length} products take their stock from this master. Unlink them first.` }); e.push(...lnkErrs(v, id)); if (v.mrp && N(v.mrp) < N(v.sellingPrice)) e.push({ n: 'mrp', m: 'MRP can’t be below the selling price.' }); if (v.purchaseFactor !== null && N(v.purchaseFactor) <= 0) e.push({ n: 'purchaseFactor', m: 'Enter how many stock units one purchase unit holds.' }); e.push(...urlErr(v, ['driveLink', ...pls.flatMap(pl => [`listings.${pl.key}.url`, `listings.${pl.key}.driveLink`])])); for (const pl of pls) { const cs = String(getPath(v, `listings.${pl.key}.sku`) || '').trim().toLowerCase(); if (cs && S.products.some(x => x.id !== id && String(chanSku(x, pl.key)).toLowerCase() === cs)) e.push({ n: `listings.${pl.key}.sku`, m: `Another product uses this SKU on ${pl.name}.` }); } return e; },
     onSave: async v => {
       if (!v.sku) v.sku = nextSku(v.brandId); v.sku = v.sku.toUpperCase();
+      if (v.kind === 'material' && !String(v.name || '').trim()) v.name = matName(v);
+      const lk = lnkFromForm(v, p); const kindF = v.kind === 'material' ? { kind: 'material', matType: v.matType || 'Other', colour: v.colour || '', grade: v.grade || '', spec: v.spec || '' } : { kind: null, matType: null, colour: null, grade: null, spec: null }; delete v.link; delete v.kind;
       const listings = JSON.parse(JSON.stringify((p && p.listings) || {})); const snaps = [];
       for (const k in (v.listings || {})) {
         const l = v.listings[k]; const cur = listings[k] || {}; const nx = { ...cur };
@@ -135,7 +143,8 @@ EDIT.product = (id, preset = {}) => {
         if (l.ratingAvg !== undefined && (N(l.ratingAvg) !== N(cur.ratingAvg) || N(l.ratingCount) !== N(cur.ratingCount)) && N(l.ratingAvg) > 0) { nx.ratingAsOf = TODAY(); snaps.push({ platform: k, avg: N(l.ratingAvg), count: N(l.ratingCount) }); }
         listings[k] = nx;
       }
-      const pid = await saveDoc('products', id, { ...base(p), ...v, unit: v.unit || 'pc', purchaseFactor: N(v.purchaseFactor) || 1, supplierId: v.supplierId || null, driveLink: safeURL(v.driveLink) || null, listings }, ['catalogue', `Product ${v.sku} · ${v.name}`]);
+      const pid = await saveDoc('products', id, { ...base(p), ...v, ...kindF, link: lk.link, unit: v.unit || 'pc', purchaseFactor: N(v.purchaseFactor) || 1, supplierId: v.supplierId || null, driveLink: safeURL(v.driveLink) || null, listings }, ['catalogue', `${kindF.kind ? 'Master material' : 'Product'} ${v.sku} · ${v.name}${lk.link ? ' · uses ' + lk.link.parts.map(x => (prodOf(x.id) || {}).sku).join(' + ') : ''}`]);
+      if (lk.moves.length) await batchAll(lk.moves);
       if (snaps.length) await batchAll(snaps.map(s => ({ op: 'set', path: `ratingSnaps/${pid}_${s.platform}_${TODAY()}`, data: clean({ productId: pid, platform: s.platform, date: TODAY(), avg: s.avg, count: s.count, ...stampOf(null) }) })));
     },
     onDelete: p ? delFn('products', id, 'catalogue', `Product ${p.sku} · ${p.name}`, () => { const n = S.sales.filter(s => s.productId === id).length; return n ? `This product has ${n} sales entries. Archive it instead so your history stays intact.` : ''; }) : null,
