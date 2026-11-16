@@ -66,7 +66,27 @@ function demoExtend(d) {
   const m0 = T.slice(0, 7); const hradj = [{ id: 'demo-hj1', employeeId: d.employees[0].id, type: 'incentive', month: m0, amount: 2500, note: 'Same-day dispatch target met' }, { id: 'demo-hj2', employeeId: d.employees[2].id, type: 'advance', month: prevMonth(m0), amount: 9000, monthly: 3000, note: 'Festival advance' }, { id: 'demo-hj3', employeeId: d.employees[1].id, type: 'overtime', month: m0, amount: 1200, note: 'Sale-day listing work' }];
   const yr = +T.slice(0, 4); const hol = [[`${yr}-12-25`, 'Christmas'], [`${yr + 1}-01-01`, 'New Year’s Day'], [`${yr + 1}-01-26`, 'Republic Day'], [`${yr + 1}-05-01`, 'May Day']].filter(h => h[0] >= T).map(([date, name]) => ({ date, name }));
   demoMasters(d, orders, D);
-  return { ...d, orders, claims: cl, accounts, pinvoices, txns, offers, ratingSnaps, hrprofiles, candidates, hradj, _settings: { attendance: { holidays: hol }, recon: { opening: Object.fromEntries(['amazon', 'flipkart', 'meesho'].map(k => [k, { amount: 0, asOf: monthsBack(4)[0] + '-01' }])) } } };
+  return { ...d, orders, claims: cl, accounts, pinvoices, txns, offers, ratingSnaps, hrprofiles, candidates, hradj, packaging: demoPackaging(), _settings: { attendance: { holidays: hol }, recon: { opening: Object.fromEntries(['amazon', 'flipkart', 'meesho'].map(k => [k, { amount: 0, asOf: monthsBack(4)[0] + '-01' }])) } } };
+}
+
+/* ---------- demo consumables / packaging: one entry for each size ---------- */
+function demoPackaging() {
+  const bal = 'Sri Balaji Packaging, Erode', kongu = 'Kongu Polymers, Tiruppur', pet = 'Kovai PET Bottles, Coimbatore', prn = 'Print Hub, Erode';
+  return [
+    { id: 'demo-pk1', category: 'leatherbox', name: 'Kraft box', l: 10, w: 7, h: 2, dimUnit: 'in', thick: 3, thickUnit: 'ply', supplierName: bal, stock: 240, stockUnit: 'pcs', note: 'Wallets and card holders' },
+    { id: 'demo-pk2', category: 'leatherbox', name: 'Kraft box', l: 12, w: 9, h: 3, dimUnit: 'in', thick: 3, thickUnit: 'ply', supplierName: bal, stock: 85, stockUnit: 'pcs', note: 'Leather sheets up to A4' },
+    { id: 'demo-pk3', category: 'paintbox', name: 'Corrugated box', l: 15, w: 15, h: 10, dimUnit: 'cm', thick: 5, thickUnit: 'ply', supplierName: bal, stock: 120, stockUnit: 'pcs', note: 'Fits 4 paint bottles' },
+    { id: 'demo-pk4', category: 'polybag', name: 'Poly bag', l: 6, w: 8, dimUnit: 'in', thick: 50, thickUnit: 'micron', supplierName: kongu, stock: 1500, stockUnit: 'pcs' },
+    { id: 'demo-pk5', category: 'polybag', name: 'Poly bag', l: 8, w: 10, dimUnit: 'in', thick: 50, thickUnit: 'micron', supplierName: kongu, stock: 900, stockUnit: 'pcs' },
+    { id: 'demo-pk6', category: 'polybag', name: 'Courier bag', l: 12, w: 16, dimUnit: 'in', thick: 60, thickUnit: 'micron', supplierName: kongu, stock: 400, stockUnit: 'pcs', note: 'Tamper-proof, with POD pocket' },
+    { id: 'demo-pk7', category: 'bubble', name: 'Bubble wrap', w: 1, dimUnit: 'm', rollLen: 100, rollUnit: 'm', supplierName: kongu, stock: 3, stockUnit: 'rolls' },
+    { id: 'demo-pk8', category: 'bottle', name: 'Bottle', capacity: 50, capUnit: 'ml', supplierName: pet, stock: 600, stockUnit: 'pcs', note: 'PET, with flip cap' },
+    { id: 'demo-pk9', category: 'bottle', name: 'Bottle', capacity: 100, capUnit: 'ml', supplierName: pet, stock: 350, stockUnit: 'pcs', note: 'PET, with flip cap' },
+    { id: 'demo-pk10', category: 'tape', name: 'Cello tape', w: 48, dimUnit: 'mm', rollLen: 65, rollUnit: 'm', supplierName: 'Erode Stationery Mart', stock: 36, stockUnit: 'rolls', note: 'Brown' },
+    { id: 'demo-pk11', category: 'sticker', name: 'Brand sticker', l: 2, w: 2, dimUnit: 'in', supplierName: prn, stock: 2000, stockUnit: 'pcs', note: 'Round, gold foil logo' },
+    { id: 'demo-pk12', category: 'sticker', name: 'Fragile sticker', l: 3, w: 2, dimUnit: 'in', supplierName: prn, stock: 0, stockUnit: 'pcs' },
+    { id: 'demo-pk13', category: 'other', name: 'Tissue paper', l: 20, w: 30, dimUnit: 'in', supplierName: prn, stock: 6, stockUnit: 'packs', note: 'Ivory, 100 sheets a pack' },
+  ];
 }
 
 /* ---------- demo master stock: leather by the sq ft, paint by the litre, dye by the kg, and the SKUs that use them ---------- */

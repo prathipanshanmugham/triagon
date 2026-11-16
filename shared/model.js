@@ -9,6 +9,7 @@ const MODEL = (() => {
     { k: 'brands', l: 'Brands', g: 'Catalogue & stock', i: 'tag' },
     { k: 'catalogue', l: 'Catalogue & listings', g: 'Catalogue & stock', i: 'grid' },
     { k: 'inventory', l: 'Inventory & purchasing', g: 'Catalogue & stock', i: 'box' },
+    { k: 'packaging', l: 'Consumables & packaging', g: 'Catalogue & stock', i: 'pack' },
     { k: 'orders', l: 'Sales orders', g: 'Sales', i: 'cart' },
     { k: 'returns', l: 'Returns & claims', g: 'Sales', i: 'undo' },
     { k: 'finance', l: 'Finance & accounts', g: 'Money', i: 'rupee' },
@@ -31,12 +32,12 @@ const MODEL = (() => {
   const ALL_EDIT = Object.fromEntries(MODULES.map(m => [m.k, 'edit']));
   const DEFAULT_ROLE_DEFS = {
     manager: { label: 'Manager', modules: { ...ALL_EDIT, ceo: 'none', hr: 'none', users: 'view', logs: 'view' }, sections: Object.fromEntries(FIN_SECTIONS.map(s => [s[0], true])), abilities: { overview: true, costs: true, export: true, approveDelete: true } },
-    staff: { label: 'Staff', modules: { dashboard: 'view', ceo: 'none', daily: 'edit', reports: 'none', brands: 'view', catalogue: 'edit', inventory: 'edit', orders: 'edit', returns: 'edit', finance: 'none', calculator: 'view', marketing: 'view', customers: 'edit', attendance: 'view', hr: 'none', approvals: 'view', users: 'none', logs: 'none' }, sections: { pnl: false, sales: true, expenses: false, recurring: false, payouts: false, accounts: false, assets: false }, abilities: { overview: false, costs: false, export: false, approveDelete: false } },
+    staff: { label: 'Staff', modules: { dashboard: 'view', ceo: 'none', daily: 'edit', reports: 'none', brands: 'view', catalogue: 'edit', inventory: 'edit', packaging: 'edit', orders: 'edit', returns: 'edit', finance: 'none', calculator: 'view', marketing: 'view', customers: 'edit', attendance: 'view', hr: 'none', approvals: 'view', users: 'none', logs: 'none' }, sections: { pnl: false, sales: true, expenses: false, recurring: false, payouts: false, accounts: false, assets: false }, abilities: { overview: false, costs: false, export: false, approveDelete: false } },
   };
   // Which modules may write a collection (any one is enough) and which may read it.
   const W = {
     brands: ['brands'], products: ['catalogue', 'inventory'], ratingSnaps: ['customers', 'catalogue'],
-    moves: ['inventory', 'returns'], pos: ['inventory'], suppliers: ['inventory'], pinvoices: ['inventory', 'finance'],
+    moves: ['inventory', 'returns'], pos: ['inventory'], suppliers: ['inventory'], packaging: ['packaging'], pinvoices: ['inventory', 'finance'],
     orders: ['orders'], claims: ['returns', 'finance'], sales: ['finance', 'orders', 'returns'],
     expenses: ['finance', 'hr'], recurring: ['finance'], payouts: ['finance'], assets: ['finance'], accounts: ['finance'], txns: ['finance', 'orders', 'inventory', 'hr'],
     campaigns: ['marketing'], offers: ['marketing'], customers: ['customers', 'orders'], reviews: ['customers'],
