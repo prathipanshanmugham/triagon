@@ -417,6 +417,7 @@ on('GET', '/api/v1/:col', (req, res, p) => MCP.rest(req, res, auth(req), 'list',
 on('GET', '/api/v1/:col/:id', (req, res, p) => MCP.rest(req, res, auth(req), 'get', p));
 on('POST', '/api/v1/:col', (req, res, p) => MCP.rest(req, res, auth(req), 'create', p));
 on('PATCH', '/api/v1/:col/:id', (req, res, p) => MCP.rest(req, res, auth(req), 'update', p));
+on('POST', '/api/v1/:col/:id', (req, res, p) => MCP.rest(req, res, auth(req), 'action', p));
 on('DELETE', '/api/v1/:col/:id', (req, res, p) => MCP.rest(req, res, auth(req), 'delete', p));
 
 const server = http.createServer(async (req, res) => {

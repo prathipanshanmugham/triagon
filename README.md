@@ -10,7 +10,7 @@ Browser-based ERP for Triagon Ventures: a CEO report with a 0–100 business hea
   npm start            # http://localhost:8080
   ```
   Data goes to `./data` (set `DATA_DIR` to change). PDFs need Chromium: `npx playwright-core install chromium` once.
-- **AI agents**: `POST /mcp` (Streamable HTTP, Bearer key) or `/mcp/<key>`; REST at `/api/v1/<collection>`. Create keys in *Users & permissions › AI & API access*.
+- **AI agents**: `POST /mcp` (Streamable HTTP, Bearer key) or `/mcp/<key>`; REST at `/api/v1/<collection>`. Create keys in *Users & permissions › AI & API access*. Master stock is the `masters` collection (`/api/v1/masters`): each master material with live on-hand, committed, available, days left and the SKUs that use it. Create and update change its details; quantities change only through stock movements (`moves`, a physical count uses `type: count` with `setTo`). Opening stock and unit are locked once an item has history, SKUs must be unique, and a second master with the same name and unit is refused. `import_master_stock` (`POST /api/v1/masters/import`, preview by default, `GET` lists candidates) organises existing catalogue items into Master stock without copying them or changing their stock.
 
 Works on phones, tablets and PCs: on narrow screens wide tables turn into one card per row and line-item editors stack their fields.
 
