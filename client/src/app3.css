@@ -136,3 +136,4 @@ table.t td b.mono{white-space:nowrap}
 /* ---------- master stock ---------- */
 .mat-name{min-width:220px}
 .mat-acts{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.pk-ca{display:inline-flex;gap:4px;justify-content:flex-end;flex-wrap:wrap}

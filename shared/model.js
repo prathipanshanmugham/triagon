@@ -28,11 +28,12 @@ const MODEL = (() => {
     ['costs', 'Cost prices, margins and profit', 'When off, cost and profit columns are hidden everywhere.'],
     ['export', 'Export and copy data', 'CSV exports and copying tables.'],
     ['approveDelete', 'Delete directly and approve deletions', 'Others send a delete request that needs approval.'],
+    ['packCats', 'Manage packaging categories', 'Add, rename and delete Consumables & packaging categories. The CEO always can.'],
   ];
   const ALL_EDIT = Object.fromEntries(MODULES.map(m => [m.k, 'edit']));
   const DEFAULT_ROLE_DEFS = {
-    manager: { label: 'Manager', modules: { ...ALL_EDIT, ceo: 'none', hr: 'none', users: 'view', logs: 'view' }, sections: Object.fromEntries(FIN_SECTIONS.map(s => [s[0], true])), abilities: { overview: true, costs: true, export: true, approveDelete: true } },
-    staff: { label: 'Staff', modules: { dashboard: 'view', ceo: 'none', daily: 'edit', reports: 'none', brands: 'view', catalogue: 'edit', inventory: 'edit', packaging: 'edit', orders: 'edit', returns: 'edit', finance: 'none', calculator: 'view', marketing: 'view', customers: 'edit', attendance: 'view', hr: 'none', approvals: 'view', users: 'none', logs: 'none' }, sections: { pnl: false, sales: true, expenses: false, recurring: false, payouts: false, accounts: false, assets: false }, abilities: { overview: false, costs: false, export: false, approveDelete: false } },
+    manager: { label: 'Manager', modules: { ...ALL_EDIT, ceo: 'none', hr: 'none', users: 'view', logs: 'view' }, sections: Object.fromEntries(FIN_SECTIONS.map(s => [s[0], true])), abilities: { overview: true, costs: true, export: true, approveDelete: true, packCats: false } },
+    staff: { label: 'Staff', modules: { dashboard: 'view', ceo: 'none', daily: 'edit', reports: 'none', brands: 'view', catalogue: 'edit', inventory: 'edit', packaging: 'edit', orders: 'edit', returns: 'edit', finance: 'none', calculator: 'view', marketing: 'view', customers: 'edit', attendance: 'view', hr: 'none', approvals: 'view', users: 'none', logs: 'none' }, sections: { pnl: false, sales: true, expenses: false, recurring: false, payouts: false, accounts: false, assets: false }, abilities: { overview: false, costs: false, export: false, approveDelete: false, packCats: false } },
   };
   // Which modules may write a collection (any one is enough) and which may read it.
   const W = {
@@ -50,6 +51,18 @@ const MODEL = (() => {
     candidates: ['hr'], hrprofiles: ['hr'], payroll: ['hr'], hradj: ['hr'], claims: ['returns', 'finance'], orders: ['orders', 'finance', 'returns', 'dashboard'],
   };
   const SETTINGS_W = { ceo: ['ceo'], stock: ['inventory'], platforms: ['finance', 'calculator'], attendance: ['attendance'], reports: ['daily'], hr: ['hr'], recon: ['finance'], purchase: ['inventory', 'finance'], listings: ['catalogue'], claims: ['returns'] };
+  // settings that need an ability as well as edit rights on a module (besides the CEO)
+  const SETTINGS_A = { packaging: ['packCats', 'packaging'] };
+  // Consumables / packaging categories. The owner can add, rename and delete them (settings/packaging, list `cats`);
+  // until then this starting set applies. k never changes, so renaming keeps items in their category.
+  // extra: the extra size field items of the category get — roll (roll length) or capacity
+  const PACK_CATS = [
+    { k: 'leatherbox', l: 'Leather packaging boxes', name: 'Box', unit: 'pcs', extra: '' }, { k: 'paintbox', l: 'Paint packaging boxes', name: 'Box', unit: 'pcs', extra: '' },
+    { k: 'polybag', l: 'Poly bags', name: 'Poly bag', unit: 'pcs', extra: '' }, { k: 'bubble', l: 'Bubble wrap', name: 'Bubble wrap', unit: 'rolls', extra: 'roll' },
+    { k: 'bottle', l: 'Bottles', name: 'Bottle', unit: 'pcs', extra: 'capacity' }, { k: 'tape', l: 'Cello tape', name: 'Cello tape', unit: 'rolls', extra: 'roll' },
+    { k: 'sticker', l: 'Stickers', name: 'Sticker', unit: 'pcs', extra: '' }, { k: 'other', l: 'Other packaging materials', name: '', unit: 'pcs', extra: 'roll' },
+  ];
+  const packCats = set => (set && Array.isArray(set.cats) && set.cats.length ? set.cats.filter(c => c && c.k && c.l) : PACK_CATS);
   const COLLECTIONS = Object.keys(W);
   const mergeRole = (d, x) => ({ label: x.label || d.label, custom: !!x.custom, modules: { ...d.modules, ...(x.modules || {}) }, sections: { ...d.sections, ...(x.sections || {}) }, abilities: { ...d.abilities, ...(x.abilities || {}) } });
   function roleDefs(rolesSetting) {
@@ -72,6 +85,6 @@ const MODEL = (() => {
   const ability = (p, ab) => !p || (!p.none && !!(p.abilities || {})[ab]);
   const writeMods = col => W[col] || null;
   const readMods = col => R[col] || null;
-  return { MODULES, FIN_SECTIONS, ABILITIES, DEFAULT_ROLE_DEFS, COLLECTIONS, SETTINGS_W, mergeRole, roleDefs, permsFor, access, canView, canEdit, ability, writeMods, readMods };
+  return { MODULES, FIN_SECTIONS, ABILITIES, DEFAULT_ROLE_DEFS, COLLECTIONS, SETTINGS_W, SETTINGS_A, PACK_CATS, packCats, mergeRole, roleDefs, permsFor, access, canView, canEdit, ability, writeMods, readMods };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MODEL;

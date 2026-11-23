@@ -41,6 +41,7 @@ class Perms {
     if (col === 'logs') return parts[1] === uid || (ceo && op === 'delete') ? null : 'You can only write your own activity log.';
     if (col === 'settings') {
       const key = parts[1]; if (ceo) return null;
+      const ab = MODEL.SETTINGS_A[key]; if (ab) return MODEL.ability(p, ab[0]) && this.anyEdit(p, [ab[1]]) ? null : 'Only the CEO, or a role allowed to manage these, can change them.';
       const mods = MODEL.SETTINGS_W[key]; return mods && this.anyEdit(p, mods) ? null : 'Only the CEO can change these settings.';
     }
     if (col === 'members') {
